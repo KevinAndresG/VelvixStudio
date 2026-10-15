@@ -127,6 +127,24 @@ export function addToTimeline(media, { at = null, trackId = null } = {}) {
 }
 
 // ---------- editing ----------
+// Splits clip c (mutated into the left half) at timeline time t; returns the new right half.
+export function splitClip(c, t) {
+  const leftDur = t - c.start;
+  const right = structuredClone(c);
+  right.id = uid();
+  right.start = t; right.duration = c.duration - leftDur;
+  if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + leftDur * c.speed;
+  if (c.reverse) c.in = c.in + right.duration * c.speed;
+  right.transition = null;
+  if (c.words) { right.words = c.words.filter((w) => w.e > leftDur).map((w) => ({ ...w, s: w.s - leftDur, e: w.e - leftDur })); c.words = c.words.filter((w) => w.s < leftDur); }
+  // Split keyframes between halves.
+  for (const k of Object.keys(c.kf || {})) { right.kf[k] = c.kf[k].filter((f) => f.t >= leftDur).map((f) => ({ ...f, t: f.t - leftDur })); c.kf[k] = c.kf[k].filter((f) => f.t < leftDur); }
+  c.duration = leftDur;
+  if (c.fadeOut) c.fadeOut = 0;
+  if (right.fadeIn) right.fadeIn = 0;
+  return right;
+}
+
 export function splitAtPlayhead() {
   const t = getState().time, p = proj();
   let targets = p.clips.filter((c) => sel().includes(c.id) && t > c.start + 0.03 && t < clipEnd(c) - 0.03);
@@ -138,20 +156,7 @@ export function splitAtPlayhead() {
   const newIds = [];
   update((d) => {
     for (const tc of targets) {
-      const c = d.clips.find((x) => x.id === tc.id);
-      const leftDur = t - c.start;
-      const right = structuredClone(c);
-      right.id = uid();
-      right.start = t; right.duration = c.duration - leftDur;
-      if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + leftDur * c.speed;
-      if (c.reverse) c.in = c.in + right.duration * c.speed;
-      right.transition = null;
-      if (c.words) { right.words = c.words.filter((w) => w.e > leftDur).map((w) => ({ ...w, s: w.s - leftDur, e: w.e - leftDur })); c.words = c.words.filter((w) => w.s < leftDur); }
-      // Split keyframes between halves.
-      for (const k of Object.keys(c.kf || {})) { right.kf[k] = c.kf[k].filter((f) => f.t >= leftDur).map((f) => ({ ...f, t: f.t - leftDur })); c.kf[k] = c.kf[k].filter((f) => f.t < leftDur); }
-      c.duration = leftDur;
-      if (c.fadeOut) c.fadeOut = 0;
-      if (right.fadeIn) right.fadeIn = 0;
+      const right = splitClip(d.clips.find((x) => x.id === tc.id), t);
       d.clips.push(right);
       newIds.push(right.id);
     }
@@ -268,7 +273,7 @@ export function addText(preset = {}, content = 'Escribe aquí') {
     const start = getState().time;
     const c = newClip('text', { name: 'Texto', start, duration: 3 });
     c.text = { ...structuredClone(DEFAULT_TEXT), ...structuredClone(preset), content };
-    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight']) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
+    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
     c.trackId = ensureTrack(p, 'text', start, start + c.duration);
     p.clips.push(c); id = c.id;
   });

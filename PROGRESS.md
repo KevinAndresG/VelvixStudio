@@ -30,6 +30,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Audio:** volumen hasta 300 %, fundidos, silenciar, **separar audio del video**, cambiador de voz (11 voces), tono ±12 semitonos, reducción de ruido, normalizar, graves/agudos, grabar voz en off, texto a voz (voces de Windows, offline).
 **Subtítulos automáticos:** Whisper local (WebGPU/WASM), 12 idiomas, 3 modelos, tiempos por palabra, resaltado karaoke, re-estilizar todos, importar/exportar SRT.
 **Exportación:** MP4 H.264 (codificación GPU vía WebCodecs, ~50 fps a 1080p), WebM VP9, GIF, MP3, WAV; 480p–4K; 24–60 fps; 3 calidades; progreso, ETA, cancelar; guardar fotograma como PNG.
+**Transcripción (v1.1):** panel "Transcripción" (`TranscriptPanel.jsx` + `transcript.js`): borrar palabras corta ese tramo en todas las pistas con ripple; muletillas (eh, um, este…) y pausas detectadas por RMS del audio mezclado (umbral dB + pausa mínima) con lista previa marcable; subtítulos dinámicos (`wordAnim` pop/rebote/deslizar/aparecer sincronizado con cada palabra, `keyword` color en palabras clave, emojis automáticos, 5 presets nuevos ✦); buscar y reemplazar; vocabulario propio (difuso + «mal = Bien») aplicado tras transcribir; traducción local opus-mt en el worker de Whisper (pivote por inglés, ~80 MB por par).
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
 ## Plan por sesiones ⏳
@@ -38,13 +39,13 @@ Prioridad: **A** = muy pedido, **B** = útil, **C** = opcional. Los números (#)
 
 **Reglas de toda sesión** (ya incluidas en el prompt): leer este archivo; correr `npx vite build && node e2e/full.cjs` antes y después; agregar una prueba E2E por cada feature nueva; marcar ✅ lo terminado aquí; subir versión menor con `npm version minor --no-git-tag-version` (1.0.0 → 1.1.0); commit; `npm run dist` y `PKG=1 node e2e/full.cjs`. El instalador nuevo se instala encima del anterior (mismo appId) y conserva los proyectos.
 
-### Sesión 1 — Transcripción y subtítulos inteligentes
+### Sesión 1 — Transcripción y subtítulos inteligentes ✅ (v1.1.0)
 Base común: las palabras con tiempos que ya da Whisper (`src/editor/captions.js`).
-- [ ] #12 A — **Edición por transcripción**: panel de texto; borrar palabras = cortar ese tramo del timeline (con ripple).
-- [ ] #13 A — **Quitar muletillas y pausas** ("eh", "este", "um", silencios) en un clic, con vista previa de qué se borra. Umbral de silencio con los picos de audio.
-- [ ] #14 A — **Subtítulos dinámicos**: animación por palabra (pop, rebote, deslizar), palabras clave resaltadas en color, emojis automáticos. Nuevos presets.
-- [ ] #20 B — **Buscar y reemplazar** en todos los subtítulos + **vocabulario propio** (marcas y nombres) que se corrige solo tras transcribir.
-- [ ] #9a B — **Traducir subtítulos** (modelo ONNX local tipo opus-mt/NLLB, en el mismo worker que Whisper).
+- [x] ✅ #12 A — **Edición por transcripción**: panel de texto; borrar palabras = cortar ese tramo del timeline (con ripple).
+- [x] ✅ #13 A — **Quitar muletillas y pausas** ("eh", "este", "um", silencios) en un clic, con vista previa de qué se borra. Umbral de silencio con los picos de audio.
+- [x] ✅ #14 A — **Subtítulos dinámicos**: animación por palabra (pop, rebote, deslizar), palabras clave resaltadas en color, emojis automáticos. Nuevos presets.
+- [x] ✅ #20 B — **Buscar y reemplazar** en todos los subtítulos + **vocabulario propio** (marcas y nombres) que se corrige solo tras transcribir.
+- [x] ✅ #9a B — **Traducir subtítulos** (modelo ONNX local tipo opus-mt/NLLB, en el mismo worker que Whisper).
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 1 completa siguiendo las reglas de toda sesión.`
 
@@ -120,6 +121,7 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 
 ## Pruebas E2E (correr tras cada cambio)
 - `npx vite build` y luego `node e2e/full.cjs` → todas las features + exportación real a `e2e/out.mp4` (verificar con ffprobe: 330 frames, 11.0 s video y audio).
+- `full.cjs` también verifica la Sesión 1 (líneas `OK`/`FAIL`, sale con código 1 si algo falla). La traducción descarga opus-mt la primera vez.
 - `node e2e/cap.cjs` → subtítulos automáticos. `node e2e/smoke.cjs` → capturas rápidas.
 - `PKG=1 node e2e/full.cjs` → lo mismo contra la app empaquetada (`npm run dist` antes).
 - Medios de prueba en `e2e/media/`.
@@ -132,6 +134,8 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - **Normalizar cts** al mínimo (edit list / B-frames) o el export sale desfasado 2 frames respecto al preview.
 - **No usar `-shortest`** con video copiado (genpts): corta el audio a 1 s. El audio ya se recorta con `atrim`.
 - `ffmpeg` muerto durante export → `export:frame` resuelve false (antes esperaba `drain` para siempre).
+- `<span>` inline sin espacios entre sí no hacen salto de línea: usar `inline-block` (lista de palabras de la transcripción).
+- Las palabras de los subtítulos guardan `text` además de `s/e`: el corte con ripple reconstruye el contenido desde ellas.
 - `useStore(selector)` debe devolver referencias estables (nada de `.filter()` dentro del selector).
 - El preview se pausa durante la exportación (`state.exporting`).
 - Protocolo `app://` necesita MIME `.mjs` → `text/javascript` (lo pide onnxruntime para Whisper).

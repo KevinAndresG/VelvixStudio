@@ -38,6 +38,8 @@ export const DEFAULT_TEXT = {
   glow: { on: false, color: '#00e5ff', size: 25 },
   gradient: { on: false, from: '#ff4ecd', to: '#ffd36e' },
   highlight: { on: false, color: '#ffe14d' }, // karaoke word highlight for captions
+  keyword: { on: false, color: '#ffe14d' }, // auto-colored key words
+  wordAnim: 'none', // per-word entrance timed to speech: pop | bounce | slide | fade
   maxWidth: 0.85,
 };
 export const DEFAULT_AUDIO_FX = { voice: 'none', pitch: 0, denoise: false, normalize: false, bass: 0, treble: 0 };
@@ -196,7 +198,25 @@ export const TEXT_PRESETS = [
   { name: 'Minimal', t: { color: '#ffffff', bold: false, stroke: { on: false }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, letterSpacing: 6, uppercase: true } },
   { name: 'Subtítulo', t: { color: '#ffffff', size: 64, stroke: { on: true, color: '#000000', width: 6 }, shadow: { on: true, color: '#000000aa', blur: 8, x: 0, y: 3 }, bg: { on: false }, glow: { on: false }, gradient: { on: false } } },
   { name: 'Karaoke', t: { color: '#ffffff', stroke: { on: true, color: '#000000', width: 7 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, highlight: { on: true, color: '#ffe14d' } } },
+  // Dynamic caption presets: words enter as they are spoken, key words colored.
+  { name: 'Pop dinámico', t: { color: '#ffffff', uppercase: true, stroke: { on: true, color: '#000000', width: 9 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'pop', keyword: { on: true, color: '#ffe14d' } } },
+  { name: 'Rebote', t: { color: '#ffffff', stroke: { on: true, color: '#1a1a1a', width: 8 }, shadow: { on: true, color: '#00000099', blur: 0, x: 0, y: 6 }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'bounce', keyword: { on: true, color: '#3dff8b' } } },
+  { name: 'Deslizar', t: { color: '#ffffff', stroke: { on: false }, shadow: { on: true, color: '#000000aa', blur: 10, x: 0, y: 4 }, bg: { on: true, color: '#000000', opacity: 60, radius: 12, pad: 14 }, glow: { on: false }, gradient: { on: false }, wordAnim: 'slide', keyword: { on: true, color: '#5ee7ff' } } },
+  { name: 'Creador', t: { color: '#ffffff', font: 'Arial Black', uppercase: true, stroke: { on: true, color: '#000000', width: 10 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'pop', keyword: { on: true, color: '#ff3d6e' }, highlight: { on: true, color: '#3dff8b' } } },
+  { name: 'Suave', t: { color: '#ffffff', bold: false, stroke: { on: false }, shadow: { on: true, color: '#000000cc', blur: 14, x: 0, y: 3 }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'fade', keyword: { on: false } } },
 ];
+export const WORD_ANIMS = { none: 'Ninguna', pop: 'Pop', bounce: 'Rebote', slide: 'Deslizar', fade: 'Aparecer' };
+
+// Words worth coloring in dynamic captions: numbers, shouting, long non-filler words.
+const STOP = new Set('porque entonces tambien cuando despues siempre tenemos estamos ustedes nosotros todavia aunque mientras desde hasta about because before through there their these those would should could which really people something'.split(' '));
+export function isKeyword(word) {
+  const w = String(word).replace(/[^\p{L}\p{N}]/gu, '');
+  if (!w) return false;
+  if (/\p{N}/u.test(w)) return true;
+  const plain = w.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+  if (w.length >= 3 && w === w.toUpperCase() && w !== w.toLowerCase()) return true;
+  return plain.length >= 7 && !STOP.has(plain);
+}
 
 export const STICKERS = ['😀', '😂', '🤣', '😍', '🥰', '😎', '🤩', '😱', '😭', '😡', '🤯', '🥳', '👍', '👏', '🙌', '🔥', '✨', '💯', '❤️', '💔', '⭐', '🌟', '⚡', '💥', '🎉', '🎊', '🎵', '🎶', '📍', '👉', '👈', '👆', '👇', '✅', '❌', '⚠️', '❓', '❗', '💡', '🚀', '🏆', '💰', '📈', '📉', '🍕', '☕', '🌈', '☀️', '🌙', '❄️', '🌊', '🐶', '🐱', '🦄', '👀', '💬', '🗯️', '💤', '🎬', '📸', '🎮'];
 

@@ -1,5 +1,5 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
-import { clamp, lerp, clipEnd, transformAt, effectiveFilter, mediaOf } from './model.js';
+import { clamp, lerp, clipEnd, transformAt, effectiveFilter, mediaOf, isKeyword } from './model.js';
 
 // ---------- scratch canvases ----------
 const pool = new Map();
@@ -289,11 +289,14 @@ export function drawText(ctx, clip, t, W, H) {
 
   // Unit list: each unit draws independently so per-letter/word animations and karaoke work.
   const totalChars = content.replace(/\n/g, '').length;
-  const perUnit = st.unitAnim || st.units === 'wave' || st.reveal < 1 || (tx.highlight && tx.highlight.on);
-  const byWord = st.unitAnim === 'wordsUp' || (tx.highlight && tx.highlight.on);
+  const wordAnim = tx.wordAnim && tx.wordAnim !== 'none' ? tx.wordAnim : null, kw = tx.keyword && tx.keyword.on;
+  const perUnit = st.unitAnim || st.units === 'wave' || st.reveal < 1 || (tx.highlight && tx.highlight.on) || wordAnim || kw;
+  const byWord = st.unitAnim === 'wordsUp' || (tx.highlight && tx.highlight.on) || wordAnim || kw;
   const words = clip.words; // [{ s, e }] seconds relative to clip, for karaoke
   let unitIndex = 0, charIndex = 0;
-  const totalWords = content.split(/\s+/).filter(Boolean).length;
+  const rawWords = tx.content.split(/\s+/).filter(Boolean), totalWords = rawWords.length;
+  // Speech-timed word start (falls back to an even spread when there are no word timings).
+  const wordStart = (i) => (words && words[i] ? words[i].s : (i / Math.max(1, totalWords)) * clip.duration * 0.8);
   let activeWord = -1;
   if (tx.highlight && tx.highlight.on) {
     if (words && words.length) activeWord = words.findIndex((w) => local >= w.s && local < w.e);
@@ -351,14 +354,25 @@ export function drawText(ctx, clip, t, W, H) {
         else uy -= (1 - easeOut(local01)) * size * 0.4;
       }
       if (st.units === 'wave') uy += Math.sin(st.loopT * 6 - idx * 0.5) * size * 0.12;
+      let ux2 = ux;
+      if (wordAnim && byWord) {
+        const wp = clamp((local - wordStart(idx)) / 0.25, 0, 1);
+        if (wp <= 0) { x.restore(); continue; }
+        const m = x.measureText(u).width, q = easeOut(wp);
+        if (wordAnim === 'pop') { const sc = wp < 0.6 ? lerp(0.4, 1.18, wp / 0.6) : lerp(1.18, 1, (wp - 0.6) / 0.4); x.translate(ux + m / 2, uy); x.scale(sc, sc); x.translate(-(ux + m / 2), -uy); ua *= Math.min(1, wp * 3); }
+        else if (wordAnim === 'bounce') { uy -= Math.abs(Math.sin(wp * Math.PI * 2)) * (1 - wp) * size * 0.5; ua *= Math.min(1, wp * 3); }
+        else if (wordAnim === 'slide') { ux2 -= (1 - q) * size * 0.7; ua *= q; }
+        else ua *= q;
+      }
       x.globalAlpha = opacity * ua;
       let color = fill;
+      if (kw && byWord && isKeyword(rawWords[idx] || u)) color = tx.keyword.color;
       if (activeWord >= 0 && byWord && idx === activeWord) {
         color = tx.highlight.color;
         const m = x.measureText(u).width;
         x.translate(ux + m / 2, uy); x.scale(1.08, 1.08); x.translate(-(ux + m / 2), -uy);
       }
-      paint(u, ux, uy, color);
+      paint(u, ux2, uy, color);
       x.restore();
     }
   });

@@ -2,13 +2,15 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, update, toast } from '../store.js';
 import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER } from '../engine/model.js';
 import { cssFilter } from '../engine/render.js';
-import { Icon, IconBtn, Select, Slider } from '../ui.jsx';
+import { Icon, IconBtn, Select, Slider, Toggle } from '../ui.jsx';
 import { importDialog, importPaths, addToTimeline, addText, addSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently } from './actions.js';
-import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack } from './captions.js';
+import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
+import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
+import TranscriptTab from './TranscriptPanel.jsx';
 
 const TABS = [
   ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
-  ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'],
+  ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'],
 ];
 
 export default function MediaPanel() {
@@ -31,6 +33,7 @@ export default function MediaPanel() {
         {tab === 'transitions' && <TransitionsTab />}
         {tab === 'filters' && <FiltersTab />}
         {tab === 'captions' && <CaptionsTab />}
+        {tab === 'transcript' && <TranscriptTab />}
       </div>
     </aside>
   );
@@ -253,8 +256,14 @@ function CaptionsTab() {
   const [model, setModel] = useState(() => localStorage.getItem('whisperModel') || 'onnx-community/whisper-base');
   const [lang, setLang] = useState('es');
   const [style, setStyle] = useState(14);
+  const [emojis, setEmojis] = useState(false);
   const [busy, setBusy] = useState(false);
-  const run = async () => { localStorage.setItem('whisperModel', model); setBusy(true); await generateCaptions({ model, language: lang, style }); setBusy(false); };
+  const [find, setFind] = useState('');
+  const [repl, setRepl] = useState('');
+  const [vocab, setVocabText] = useState(getVocab);
+  const [src, setSrc] = useState('es');
+  const [tgt, setTgt] = useState('en');
+  const run = async () => { localStorage.setItem('whisperModel', model); setBusy(true); await generateCaptions({ model, language: lang, style, emojis }); setBusy(false); };
   const exportSrt = async () => {
     const out = await window.api.saveDialog({ defaultPath: `${getState().project.name}.srt`, filters: [{ name: 'Subtítulos SRT', extensions: ['srt'] }] });
     if (out) { await window.api.writeFile(out, new TextEncoder().encode(toSRT(getState().project))); toast('SRT exportado'); }
@@ -263,6 +272,7 @@ function CaptionsTab() {
     const f = await window.api.openFile([{ name: 'Subtítulos', extensions: ['srt', 'vtt'] }]);
     if (f) toast(`${fromSRT(await window.api.readFile(f), style)} subtítulos importados`);
   };
+  const translate = async () => { setBusy(true); await translateCaptions(src, tgt); setBusy(false); };
   return (
     <div className="panel">
       <h5>Subtítulos automáticos</h5>
@@ -271,11 +281,28 @@ function CaptionsTab() {
       <Select label="Modelo" value={model} options={WHISPER_MODELS} onChange={setModel} />
       <label className="field select"><span>Estilo</span>
         <select value={style} onChange={(e) => { setStyle(+e.target.value); if (hasCaptions) restyleCaptions(+e.target.value); }}>
-          {TEXT_PRESETS.map((p, i) => <option key={i} value={i}>{p.name}</option>)}
+          {TEXT_PRESETS.map((p, i) => <option key={i} value={i}>{p.name}{p.t.wordAnim ? ' ✦' : ''}</option>)}
         </select>
       </label>
+      <Toggle label="Emojis automáticos" value={emojis} onChange={setEmojis} />
       <button className="btn primary wide" disabled={busy} onClick={run}><Icon name="wand" size={16} /> {busy ? 'Generando…' : hasCaptions ? 'Volver a generar' : 'Generar subtítulos'}</button>
       {hasCaptions && <button className="btn wide" onClick={selectCaptionTrack}><Icon name="layers" size={16} /> Seleccionar todos (editar estilo en lote)</button>}
+      {hasCaptions && <button className="btn wide" onClick={() => { let n = 0; update((d) => { n = addCaptionEmojis(d); }); toast(`${n} emojis agregados`); }}><Icon name="smile" size={16} /> Agregar emojis a los subtítulos</button>}
+      <p className="hint">Los estilos con ✦ son dinámicos: cada palabra entra al hablarse y las palabras clave se resaltan.</p>
+      <h5>Buscar y reemplazar</h5>
+      <input className="input" placeholder="Buscar…" value={find} onChange={(e) => setFind(e.target.value)} />
+      <input className="input" placeholder="Reemplazar con…" value={repl} onChange={(e) => setRepl(e.target.value)} />
+      <button className="btn wide" disabled={!find} onClick={() => toast(`${findReplace(find, repl)} reemplazos`)}><Icon name="search" size={15} /> Reemplazar todo</button>
+      <h5>Vocabulario propio</h5>
+      <p className="hint">Marcas y nombres, uno por línea. Se corrigen solos al transcribir. Usa «mal = Bien» para una corrección exacta.</p>
+      <textarea rows={3} placeholder={'Velvix, CapCut, tic toc = TikTok'} value={vocab} onChange={(e) => { setVocabText(e.target.value); setVocab(e.target.value); }} />
+      <h5>Traducir subtítulos</h5>
+      <p className="hint">Traducción local con IA (el modelo se descarga una vez, ~80 MB por idioma).</p>
+      <div className="row2">
+        <Select value={src} options={TRANSLATE_LANGS} onChange={setSrc} />
+        <Select value={tgt} options={Object.fromEntries(Object.entries(TRANSLATE_LANGS).filter(([k]) => k !== 'ja' && k !== 'ko'))} onChange={setTgt} />
+      </div>
+      <button className="btn wide" disabled={busy || !hasCaptions} onClick={translate}><Icon name="transition" size={15} /> Traducir</button>
       <h5>Archivos SRT</h5>
       <div className="row2">
         <button className="btn" onClick={importSrt}><Icon name="upload" size={15} /> Importar</button>

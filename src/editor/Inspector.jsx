@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
-  DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, transformAt, kfValue, setTransformProp, toggleKeyframe, fmtTime, clipEnd,
+  DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, transformAt, kfValue, setTransformProp, toggleKeyframe, fmtTime, clipEnd, WORD_ANIMS,
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
 import { setSpeed, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
@@ -382,7 +382,8 @@ function StyleTab({ clip, edit }) {
   const applyPreset = (p) => edit((c) => {
     const keep = { content: c.text.content, font: c.text.font, size: p.t.size || c.text.size };
     c.text = { ...c.text, ...structuredClone(p.t), ...keep };
-    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight']) c.text[k] = { ...DEFAULT_TEXT[k], ...(p.t[k] || {}) };
+    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(p.t[k] || {}) };
+    c.text.wordAnim = p.t.wordAnim || 'none';
   });
   return (
     <>
@@ -424,6 +425,11 @@ function StyleTab({ clip, edit }) {
       <Section title="Resaltado karaoke" defaultOpen={t.highlight.on}>
         <Toggle label="Resaltar palabra actual" value={t.highlight.on} onChange={(v) => sub('highlight', 'on', v)} />
         {t.highlight.on && <Color label="Color" value={t.highlight.color} onChange={(v) => sub('highlight', 'color', v)} />}
+      </Section>
+      <Section title="Subtítulos dinámicos" defaultOpen={(t.wordAnim || 'none') !== 'none' || !!(t.keyword && t.keyword.on)}>
+        <Select label="Animación por palabra" value={t.wordAnim || 'none'} options={WORD_ANIMS} onChange={(v) => edit((c) => { c.text.wordAnim = v; })} />
+        <Toggle label="Resaltar palabras clave" value={!!(t.keyword && t.keyword.on)} onChange={(v) => edit((c) => { c.text.keyword = { ...DEFAULT_TEXT.keyword, ...c.text.keyword, on: v }; })} />
+        {t.keyword && t.keyword.on && <Color label="Color" value={t.keyword.color} onChange={(v) => sub('keyword', 'color', v)} />}
       </Section>
     </>
   );
