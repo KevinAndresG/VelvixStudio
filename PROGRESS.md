@@ -36,7 +36,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 Cada sesión agrupa features que comparten código, para hacerlas juntas con un solo prompt y luego limpiar el contexto (`/clear`).
 Prioridad: **A** = muy pedido, **B** = útil, **C** = opcional. Los números (#) se mantienen para referencia.
 
-**Reglas de toda sesión** (ya incluidas en el prompt): leer este archivo; correr `npx vite build && node e2e/full.cjs` antes y después; agregar una prueba E2E por cada feature nueva; marcar ✅ lo terminado aquí; commit; `npm run dist` y `PKG=1 node e2e/full.cjs`.
+**Reglas de toda sesión** (ya incluidas en el prompt): leer este archivo; correr `npx vite build && node e2e/full.cjs` antes y después; agregar una prueba E2E por cada feature nueva; marcar ✅ lo terminado aquí; subir versión menor con `npm version minor --no-git-tag-version` (1.0.0 → 1.1.0); commit; `npm run dist` y `PKG=1 node e2e/full.cjs`. El instalador nuevo se instala encima del anterior (mismo appId) y conserva los proyectos.
 
 ### Sesión 1 — Transcripción y subtítulos inteligentes
 Base común: las palabras con tiempos que ya da Whisper (`src/editor/captions.js`).
