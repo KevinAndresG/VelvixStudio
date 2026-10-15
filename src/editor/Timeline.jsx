@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
-import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime } from '../engine/model.js';
+import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime, subClip, speedAt } from '../engine/model.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import {
   splitAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
@@ -280,15 +280,17 @@ export default function Timeline() {
         const c = p.clips.find((x) => x.id === clip.id);
         if (side === 'r') {
           let end = Math.max(c0.start + 0.1, t);
-          if (!unbounded && media) end = Math.min(end, c0.start + (media.duration - c0.in) / c0.speed);
+          if (!unbounded && media) end = Math.min(end, clipEnd(c0) + (media.duration - c0.in - c0.duration * c0.speed) / speedAt(c0, clipEnd(c0)));
           c.duration = end - c0.start;
+          if (c0.curve) { const k = subClip(c0, 0, c.duration); c.curve = k.curve; c.speed = k.speed; }
         } else {
           let start = Math.min(t, clipEnd(c0) - 0.1);
-          if (!unbounded && media) start = Math.max(start, c0.start - c0.in / c0.speed);
+          if (!unbounded && media) start = Math.max(start, c0.start - c0.in / speedAt(c0, c0.start)); // past the edges a curve keeps its edge speed
           start = Math.max(0, start);
           const d = start - c0.start;
           c.start = start; c.duration = c0.duration - d;
           if (!unbounded) c.in = c0.in + d * c0.speed;
+          if (c0.curve) { const k = subClip(c0, d, c0.duration); c.curve = k.curve; c.speed = k.speed; c.in = c0.in + k.off; }
           for (const k of Object.keys(c.kf || {})) c.kf[k] = c0.kf[k].map((f) => ({ ...f, t: f.t - d })).filter((f) => f.t >= 0);
           if (c.words) c.words = c0.words.map((w) => ({ s: w.s - d, e: w.e - d }));
         }

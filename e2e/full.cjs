@@ -284,6 +284,82 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   const db = [meanDb(0.1, 1.7), meanDb(3.2, 2)];
   check('#3 export respeta los keyframes de volumen', db[0] < -60 && db[1] > -40, db.join(' dB → ') + ' dB');
 
+  // Session 2 regressions with ramp.mp4: frame number coded in luma (left = n % 20, right = n / 20, 12·k+8)
+  // and a chirp whose pitch gives the source time (300 Hz + 60 Hz/s).
+  const FF = require(APP + '/node_modules/ffmpeg-static'), cp = require('child_process');
+  const dec = (l, r) => { const y = (v) => (v * 219) / 255 + 16; return Math.round((y(r) - 13) / 12) * 20 + Math.round((y(l) - 13) / 12); };
+  const exportTo = async (name) => {
+    const out = path.win32.normalize(path.join(S, name));
+    await app.evaluate(({ dialog }, o) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: o }); }, out);
+    await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export'); await page.click('.export .btn.primary');
+    let t = '';
+    for (let i = 0; i < 40; i++) { await page.waitForTimeout(1000); t = await page.evaluate(() => document.querySelector('.export')?.innerText || ''); if (/completa|fall/.test(t)) break; }
+    await page.click('.export .btn:has-text("Listo"), .export .btn:has-text("Volver")').catch(() => {});
+    return /completa/.test(t) ? out : t.replace(/\s+/g, ' ');
+  };
+  const rv = await page.evaluate(async (files) => {
+    const { actions: A, store, model: M } = window.__velvix;
+    store.update((d) => { d.clips = []; d.tracks = d.tracks.filter((t) => t.main); d.background.type = 'black'; });
+    const [ramp, gray] = await A.importPaths(files);
+    const v = A.addToTimeline(ramp); A.setCurve(v, M.SPEED_CURVES.bullet.pts);
+    return { v, gray: gray.id };
+  }, ['ramp.mp4', 'gray.png'].map((f) => path.join(S, 'media', f)));
+  const clipNow = () => page.evaluate((v) => window.__velvix.store.getState().project.clips.find((c) => c.id === v), rv.v);
+  const srcAt = (c, t) => page.evaluate(([c, t]) => window.__velvix.model.sourceTime(c, t, null), [c, t]);
+  // #2 slow-motion audio: in the 0.07× part the pitch still follows sourceTime (stretching per piece used to leave gaps).
+  const c0 = await clipNow();
+  const OUT4 = await exportTo('out-ramp.mp4');
+  const pitch = (t) => {
+    const raw = cp.execFileSync(FF, ['-v', 'error', '-ss', String(t - 0.1), '-t', '0.2', '-i', OUT4, '-vn', '-ac', '1', '-ar', '48000', '-f', 'f32le', '-']);
+    const a = new Float32Array(raw.buffer, raw.byteOffset, raw.length / 4); let z = 0, f0 = -1, l = -1;
+    for (let i = 1; i < a.length; i++) if (a[i - 1] < 0 && a[i] >= 0) { z++; if (f0 < 0) f0 = i; l = i; }
+    return z > 1 ? ((z - 1) * 48000) / (l - f0) : 0;
+  };
+  const au = [];
+  for (const t of [1, 4, 4.6, 5.4, 7]) au.push([t, +((pitch(t) - 300) / 60).toFixed(3), +(await srcAt(c0, t)).toFixed(3)]);
+  check('#2 audio en cámara lenta sigue la curva (sin huecos)', au.every(([, a, b]) => Math.abs(a - b) < 0.05), au.map(([t, a, b]) => `${t}s:${a}/${b}`).join(' '));
+  // #24 preview above 16×: frames keep coming (seeking every animation frame used to leave the canvas black).
+  await page.evaluate((v) => window.__velvix.actions.setCurve(v, null), rv.v);
+  await page.evaluate((v) => window.__velvix.actions.setSpeed(v, 20), rv.v);
+  await page.evaluate(() => window.__velvix.store.setState({ time: 0, playing: false }));
+  await page.waitForTimeout(500);
+  const fast = await page.evaluate(async () => {
+    const { store } = window.__velvix, cv = document.querySelector('.stage canvas'), out = [];
+    store.setState({ playing: true });
+    await new Promise((res) => { const f = () => { const x = cv.getContext('2d'); out.push([x.getImageData(cv.width * 0.25, cv.height / 2, 1, 1).data[0], x.getImageData(cv.width * 0.75, cv.height / 2, 1, 1).data[0]]); if (store.getState().playing) requestAnimationFrame(f); else res(); }; requestAnimationFrame(f); });
+    return out;
+  });
+  const shown = new Set(fast.slice(0, -1).map(([l, r]) => dec(l, r)));
+  check('#24 preview a 20× muestra cuadros al reproducir', shown.size >= 5, [...shown].join(','));
+  // #2 trimming a curved clip through the timeline handles cuts the curve: the kept frames don't change.
+  await page.evaluate((v) => { window.__velvix.actions.setSpeed(v, 1); window.__velvix.actions.setCurve(v, window.__velvix.model.SPEED_CURVES.bullet.pts); window.__velvix.store.setState({ selection: [v] }); }, rv.v);
+  const preTrim = await clipNow();
+  const handle = async (side, dx) => { const h = await page.locator('.clip .trim.' + side).first().boundingBox(); await page.mouse.move(h.x + h.width / 2, h.y + h.height / 2); await page.mouse.down(); await page.mouse.move(h.x + h.width / 2 + dx, h.y + h.height / 2, { steps: 6 }); await page.mouse.up(); };
+  const w = (await page.locator('.clip').first().boundingBox()).width;
+  await page.keyboard.down('Alt'); await handle('r', -w * 0.3); await handle('l', w * 0.2); await page.keyboard.up('Alt');
+  const postTrim = await clipNow();
+  const trimErr = await page.evaluate(([b, a]) => {
+    const M = window.__velvix.model; let lo = 0, hi = b.duration;
+    for (let i = 0; i < 50; i++) { const m = (lo + hi) / 2; if (M.sourceTime(b, b.start + m, null) < a.in) lo = m; else hi = m; } // left cut d: where the original reaches a.in
+    return Math.max(...[0, 0.25, 0.5, 0.75, 1].map((u) => Math.abs(M.sourceTime(a, a.start + u * a.duration, null) - M.sourceTime(b, b.start + lo + u * a.duration, null))));
+  }, [preTrim, postTrim]);
+  check('#2 recortar bordes recorta la curva (mismos cuadros)', postTrim.duration < preTrim.duration * 0.6 && trimErr < 0.01, `${preTrim.duration.toFixed(2)} → ${postTrim.duration.toFixed(2)} s, err ${trimErr.toFixed(4)} s`);
+  // #3 mask + filter keyframes on an image in the real export (images used to taint the canvas and fail the export).
+  await page.evaluate((g) => {
+    const { actions: A, store } = window.__velvix;
+    store.update((d) => { d.clips = []; });
+    const id = A.addToTimeline(store.getState().project.media.find((m) => m.id === g));
+    store.update((d) => {
+      const c = d.clips.find((x) => x.id === id); c.duration = 2; c.fit = 'stretch';
+      c.mask = { ...c.mask, type: 'circle', w: 0.2, h: 0.4, feather: 0 };
+      c.kf = { 'mask.w': [{ t: 0, v: 0.2, ease: 'linear' }, { t: 2, v: 1.6 }], 'filter.brightness': [{ t: 0, v: -60, ease: 'linear' }, { t: 2, v: 60 }] };
+    });
+  }, rv.gray);
+  const OUT5 = await exportTo('out-mask.mp4');
+  const lit = (t) => { const raw = cp.execFileSync(FF, ['-v', 'error', '-ss', String(t), '-i', OUT5, '-frames:v', '1', '-vf', 'scale=192:108', '-f', 'rawvideo', '-pix_fmt', 'gray', '-']); let n = 0, s = 0; for (const v of raw) if (v > 20) { n++; s += v; } return [+(n / raw.length).toFixed(3), n ? Math.round(s / n) : 0]; };
+  const mk = OUT5.endsWith('.mp4') ? [0.1, 1, 1.9].map(lit) : [];
+  check('#3 export con imagen: keyframes de máscara y filtro', mk.length === 3 && mk[0][0] < mk[1][0] && mk[1][0] < mk[2][0] && mk[0][1] < mk[1][1] && mk[1][1] < mk[2][1], mk.length ? mk.map((x) => x.join('/')).join(' → ') : OUT5);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   await app.close();

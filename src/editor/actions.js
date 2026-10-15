@@ -1,5 +1,5 @@
 import { getState, setState, update, toast, setJob } from '../store.js';
-import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, clamp, srcOffset, subCurve, sourceTime, MAX_SPEED } from '../engine/model.js';
+import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, clamp, subClip, sourceTime, MAX_SPEED } from '../engine/model.js';
 
 const api = window.api;
 const PLAYABLE = ['h264', 'vp8', 'vp9', 'av1', 'hevc', 'theora'];
@@ -69,7 +69,7 @@ export async function importPaths(paths) {
             patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) m.proxy = proxy; });
           }
           if (info.type !== 'audio') {
-            const thumb = await api.thumb(path, Math.min(1, info.duration / 3), 160);
+            const thumb = await api.thumb(path, info.type === 'image' ? 0 : Math.min(1, info.duration / 3), 160); // a still has no frame at 1 s
             const strip = info.type === 'video' ? await api.strip(path, info.duration, 16) : thumb;
             patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) Object.assign(m, { thumb, strip }); });
           }
@@ -133,15 +133,11 @@ export function splitClip(c, t) {
   const right = structuredClone(c);
   right.id = uid();
   right.start = t; right.duration = c.duration - leftDur;
-  const span = c.duration * c.speed, srcL = srcOffset(c, leftDur);
-  if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + srcL;
-  if (c.reverse) c.in = c.in + span - srcL;
-  if (c.curve) {
-    // Each half keeps its part of the curve; speed = that part's average, so the mapping is unchanged.
-    const u = leftDur / c.duration;
-    right.curve = subCurve(c.curve, u, 1); c.curve = subCurve(c.curve, 0, u);
-    right.speed = (span - srcL) / right.duration; c.speed = srcL / leftDur;
-  }
+  const L = subClip(c, 0, leftDur), R = subClip(c, leftDur, c.duration);
+  if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + R.off;
+  if (c.reverse) c.in = c.in + R.span;
+  // Each half keeps its part of the curve; speed = that part's average, so the mapping is unchanged.
+  if (c.curve) { right.curve = R.curve; c.curve = L.curve; right.speed = R.speed; c.speed = L.speed; }
   right.transition = null;
   if (c.words) { right.words = c.words.filter((w) => w.e > leftDur).map((w) => ({ ...w, s: w.s - leftDur, e: w.e - leftDur })); c.words = c.words.filter((w) => w.s < leftDur); }
   // Split keyframes between halves.

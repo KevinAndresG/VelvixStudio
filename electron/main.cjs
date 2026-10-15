@@ -324,8 +324,7 @@ function volumeFilter(v) {
   return `volume='${e}':eval=frame`;
 }
 // segs: [{ path, in, srcDur, start, duration, speed, volume, fadeIn, fadeOut, pieces? }]
-// pieces (speed curves): [{ in, srcDur, speed, duration }] played back to back, each padded/trimmed to its exact length
-// and re-stamped (atempo+apad timestamps otherwise break concat with "Invalid data").
+// pieces (speed curves): [{ in, srcDur, speed, duration }] contiguous constant-speed parts of the source.
 function audioGraph(segs, total, firstInput) {
   const inputs = [], parts = [];
   const fmt = 'aformat=sample_rates=48000:channel_layouts=stereo';
@@ -333,14 +332,25 @@ function audioGraph(segs, total, firstInput) {
     inputs.push('-i', s.path);
     let src = `[${firstInput + i}:a]`, f;
     if (s.pieces) {
-      const n = s.pieces.length;
-      parts.push(`${src}${fmt},asplit=${n}${s.pieces.map((_, j) => `[s${i}p${j}]`).join('')}`);
-      s.pieces.forEach((p, j) => {
-        const ns = Math.round(p.duration * 48000);
-        parts.push(`[s${i}p${j}]atrim=start=${p.in.toFixed(5)}:duration=${p.srcDur.toFixed(5)},asetpts=PTS-STARTPTS,${[...atempoChain(p.speed), `apad=whole_len=${ns}`, `atrim=end_sample=${ns}`, 'asetpts=N/SR/TB'].join(',')}[s${i}q${j}]`);
+      // Each constant-speed part is stretched on its own with 0.25 s of source context on both sides (atempo
+      // loses ~a window at the edges of its input), cut to its exact span and joined with 10 ms crossfades.
+      // A single stretcher driven by tempo commands drifts (its internal latency applies new tempos early).
+      const ps = [];
+      for (const p of s.pieces) {
+        const q = ps[ps.length - 1];
+        if (q && Math.abs(p.speed / q.speed - 1) < 0.01) { q.srcDur += p.srcDur; q.duration += p.duration; q.speed = q.srcDur / q.duration; } else ps.push({ ...p });
+      }
+      const CTX = 0.25, XF = 0.01, n = ps.length, ns = Math.round(s.duration * 48000);
+      parts.push(`${src}${fmt},asplit=${n}${ps.map((_, j) => `[s${i}p${j}]`).join('')}`);
+      ps.forEach((p, j) => {
+        const pre = Math.min(CTX, p.in), len = p.duration + (j < n - 1 ? XF : 0);
+        const g = [`atrim=start=${(p.in - pre).toFixed(5)}:duration=${(p.srcDur + pre + CTX).toFixed(5)}`, 'asetpts=PTS-STARTPTS', ...atempoChain(p.speed),
+          `atrim=start=${(pre / p.speed).toFixed(5)}`, 'asetpts=PTS-STARTPTS', `apad=whole_len=${Math.round(len * 48000)}`, `atrim=end_sample=${Math.round(len * 48000)}`];
+        parts.push(`[s${i}p${j}]${g.join(',')}[s${i}q${j}]`);
       });
-      parts.push(`${s.pieces.map((_, j) => `[s${i}q${j}]`).join('')}concat=n=${n}:v=0:a=1[s${i}c]`);
-      src = `[s${i}c]`; f = [];
+      let cur = `[s${i}q0]`;
+      for (let j = 1; j < n; j++) { parts.push(`${cur}[s${i}q${j}]acrossfade=d=${XF}:c1=tri:c2=tri[s${i}x${j}]`); cur = `[s${i}x${j}]`; }
+      src = cur; f = [`apad=whole_len=${ns}`, `atrim=end_sample=${ns}`];
     } else f = [`atrim=start=${s.in.toFixed(4)}:duration=${s.srcDur.toFixed(4)}`, 'asetpts=PTS-STARTPTS', fmt, ...atempoChain(s.speed)];
     const vol = volumeFilter(s.volume);
     if (vol) f.push(vol);

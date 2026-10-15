@@ -6,7 +6,7 @@ import { FrameReader } from './decoder.js';
 const images = new Map(); // path → HTMLImageElement (shared, images are stateless)
 export function imageFor(path) {
   let img = images.get(path);
-  if (!img) { img = new Image(); img.decoding = 'async'; img.src = mediaUrl(path); images.set(path, img); }
+  if (!img) { img = new Image(); img.decoding = 'async'; img.crossOrigin = 'anonymous'; img.src = mediaUrl(path); images.set(path, img); } // crossOrigin: a tainted canvas can't make VideoFrames
   return img;
 }
 
@@ -88,8 +88,16 @@ export class SourcePool {
       return img.complete && img.naturalWidth ? { el: img, w: img.naturalWidth, h: img.naturalHeight } : null;
     }
     const e = this.videos.get(clip.id);
-    if (!e || e.el.readyState < 2 || !e.el.videoWidth) return null;
-    return { el: e.el, w: e.el.videoWidth, h: e.el.videoHeight };
+    if (!e) return null;
+    const el = e.el;
+    // A seeking element draws blank: show the last frame instead (scrubbing, playback above 16×).
+    if (el.seeking || el.readyState < 2 || !el.videoWidth) return e.still ? { el: e.still, w: e.still.width, h: e.still.height } : null;
+    if (el.paused && this.mode === 'preview' && e.stillT !== el.currentTime) {
+      const c = (e.still = e.still || document.createElement('canvas'));
+      if (c.width !== el.videoWidth || c.height !== el.videoHeight) { c.width = el.videoWidth; c.height = el.videoHeight; }
+      c.getContext('2d').drawImage(el, 0, 0); e.stillT = el.currentTime;
+    }
+    return { el, w: el.videoWidth, h: el.videoHeight };
   };
 
   // Preview: drive elements from the timeline clock.
@@ -135,13 +143,19 @@ export class SourcePool {
   _drive(el, want, speed, playing) {
     // Above 16× the element can't play that fast: pause and seek every frame instead.
     if (playing && speed <= 16) {
-      const rate = Math.max(0.0625, Math.round(speed * 100) / 100); // rounded: speed curves change it every frame
-      if (el.playbackRate !== rate) el.playbackRate = rate;
-      if (el.paused) { el.currentTime = want; el.play().catch(() => {}); }
-      else if (Math.abs(el.currentTime - want) > 0.25 * Math.max(1, rate)) el.currentTime = want;
+      if (el.paused) { el.playbackRate = Math.max(0.0625, speed); el.currentTime = want; el.play().catch(() => {}); return; }
+      // Drift in timeline seconds (a source-seconds tolerance would allow seconds of lag at 0.1×).
+      const lag = (want - el.currentTime) / speed;
+      if (Math.abs(lag) > 0.3) { if (!el.seeking) el.currentTime = want; return; }
+      // Small drift (speed curves change the rate every frame): nudge the rate instead of seeking.
+      const rate = Math.max(0.0625, Math.min(16, speed * (Math.abs(lag) < 0.02 ? 1 : 1 + clamp(lag * 3, -0.3, 0.3))));
+      if (Math.abs(el.playbackRate - rate) > rate * 0.01) el.playbackRate = rate;
     } else {
       if (!el.paused) el.pause();
-      if (Math.abs(el.currentTime - want) > 0.02 && !el.seeking) el.currentTime = want;
+      // While playing above 16×, seek at most every 50 ms: a new seek every animation frame never lets one paint.
+      if (Math.abs(el.currentTime - want) > 0.02 && !el.seeking && !(playing && performance.now() - (el._seekAt || 0) < 50)) {
+        el.currentTime = want; el._seekAt = performance.now();
+      }
     }
   }
   // Keep a few idle elements warm for quick scrubbing back; drop the oldest.

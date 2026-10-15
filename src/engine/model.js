@@ -112,11 +112,16 @@ export function subCurve(pts, a, b) {
   return out;
 }
 const hasCurve = (c) => c.curve && c.curve.length > 1;
-// Source seconds advanced after `local` timeline seconds into the clip.
+// Source seconds advanced after `local` timeline seconds into the clip (past the edges: edge speed).
 export function srcOffset(clip, local) {
   if (!hasCurve(clip)) return local * clip.speed;
-  const d = clip.duration, u = clamp(local / d, 0, 1);
-  return (d * clip.speed * curveArea(clip.curve, u)) / curveArea(clip.curve, 1) + (local - u * d) * clip.speed;
+  return (clip.duration * clip.speed * curveArea(clip.curve, local / clip.duration)) / curveArea(clip.curve, 1);
+}
+// Source offset, average speed and curve of the part [a, b] of clip c (clip-local seconds, may go past
+// the edges). Split and trim use it so the kept part plays exactly the same frames as before.
+export function subClip(c, a, b) {
+  const off = srcOffset(c, a), span = srcOffset(c, b) - off;
+  return { off, span, speed: span / (b - a), curve: hasCurve(c) ? subCurve(c.curve, a / c.duration, b / c.duration) : c.curve };
 }
 // Instantaneous playback rate at timeline time t.
 export function speedAt(clip, t) {
