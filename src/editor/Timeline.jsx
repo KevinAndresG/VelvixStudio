@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
-import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp } from '../engine/model.js';
+import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime } from '../engine/model.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import {
   splitAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
@@ -36,13 +36,13 @@ function Waveform({ clip, media, width, height, color }) {
     const sx = width / w;
     for (let i = 0; i < w; i++) {
       const local = (i * sx) / getState().zoom;
-      let t = clip.in + local * clip.speed;
-      if (clip.reverse) t = clip.in + clip.duration * clip.speed - local * clip.speed;
+      let t = sourceTime(clip, clip.start + local, null);
+      if (clip.reverse) t = 2 * clip.in + clip.duration * clip.speed - t;
       const v = (peaks[Math.floor(t * 50)] || 0) * clip.volume * (clip.muted ? 0 : 1);
       const bh = Math.max(1, Math.min(1, v) * h * 0.95);
       x.fillRect(i, h - bh, 1, bh);
     }
-  }, [peaks, width, height, clip.in, clip.speed, clip.volume, clip.muted, clip.reverse, clip.duration, color]);
+  }, [peaks, width, height, clip.in, clip.speed, clip.curve, clip.volume, clip.muted, clip.reverse, clip.duration, color]);
   return <canvas ref={ref} className="wave" style={{ width, height }} />;
 }
 
@@ -55,7 +55,7 @@ function FilmStrip({ clip, media, width, height }) {
   const tiles = [];
   for (let i = 0; i < count; i++) {
     const local = (i * tileW) / zoom;
-    const t = clamp(clip.in + local * clip.speed, 0, media.duration);
+    const t = clamp(sourceTime(clip, clip.start + local, null), 0, media.duration);
     const idx = Math.min(15, Math.floor((t / Math.max(0.01, media.duration)) * 16));
     tiles.push(<i key={i} style={{ left: i * tileW, width: tileW, height, backgroundImage: `url("${mediaUrl(media.strip)}")`, backgroundSize: `${tileW * 16}px ${height}px`, backgroundPosition: `${-idx * tileW}px 0` }} />);
   }
@@ -78,7 +78,7 @@ function Clip({ clip, track, project, zoom, selected, ghost, onDown, onTrim, onC
       )}
       {clip.type === 'audio' && <Waveform clip={clip} media={media} width={width} height={h - 14} color="rgba(120,255,210,.75)" />}
       <div className="clip-label">
-        {clip.speed !== 1 && <b className="badge">{clip.speed}×</b>}
+        {(clip.speed !== 1 || clip.curve) && <b className="badge">{clip.curve ? '〰 ' : ''}{+clip.speed.toFixed(2)}×</b>}
         {clip.reverse && <b className="badge">⟲</b>}
         {clip.detached && <b className="badge" title="Audio separado">🔇</b>}
         {clip.fxPath && <b className="badge" title="Efecto de voz">FX</b>}

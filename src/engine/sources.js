@@ -1,5 +1,5 @@
 // Media element pool: keeps <video>/<audio>/<img> per clip in sync with the timeline clock.
-import { clamp, clipEnd, mediaOf, sourceTime, mediaUrl, trackOf } from './model.js';
+import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf } from './model.js';
 import { activeVisual } from './render.js';
 import { FrameReader } from './decoder.js';
 
@@ -110,9 +110,9 @@ export class SourcePool {
       const ownsAudio = !c.detached && !c.fxPath;
       const tk = trackOf(project, c);
       const active = !it.upcoming && t >= c.start && t < clipEnd(c);
-      const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? c.volume * fadeGain(c, t) : 0;
+      const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
-      this._drive(e.el, want, c.speed, playing && !it.upcoming);
+      this._drive(e.el, want, speedAt(c, t), playing && !it.upcoming);
     }
     for (const c of project.clips) {
       const isAudio = c.type === 'audio' || (c.type === 'video' && c.fxPath && !c.detached);
@@ -124,20 +124,21 @@ export class SourcePool {
       const e = this._el(this.audios, c, audioPath(c, media), 'audio');
       const active = t >= c.start;
       const tk = trackOf(project, c);
-      const vol = active && !c.muted && !(tk && tk.muted) ? c.volume * fadeGain(c, t) : 0;
+      const vol = active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
       const want = clamp(sourceTime(c, Math.max(t, c.start), media), 0, media.duration);
-      this._drive(e.el, want, c.speed, playing && active);
+      this._drive(e.el, want, speedAt(c, t), playing && active);
     }
     for (const id of [...this.videos.keys()]) if (!needVideo.has(id)) this._park(this.videos, id);
     for (const id of [...this.audios.keys()]) if (!needAudio.has(id)) this._park(this.audios, id);
   }
   _drive(el, want, speed, playing) {
-    if (playing) {
-      const rate = clamp(speed, 0.0625, 16);
+    // Above 16× the element can't play that fast: pause and seek every frame instead.
+    if (playing && speed <= 16) {
+      const rate = Math.max(0.0625, Math.round(speed * 100) / 100); // rounded: speed curves change it every frame
       if (el.playbackRate !== rate) el.playbackRate = rate;
       if (el.paused) { el.currentTime = want; el.play().catch(() => {}); }
-      else if (Math.abs(el.currentTime - want) > 0.25 * Math.max(1, speed)) el.currentTime = want;
+      else if (Math.abs(el.currentTime - want) > 0.25 * Math.max(1, rate)) el.currentTime = want;
     } else {
       if (!el.paused) el.pause();
       if (Math.abs(el.currentTime - want) > 0.02 && !el.seeking) el.currentTime = want;
@@ -195,7 +196,28 @@ export function audioSegments(project, range = null) {
     if (!media || (tk && tk.muted) || (c.type === 'video' && !media.hasAudio && !c.fxPath)) continue;
     const path = audioPath(c, media);
     const srcIn = c.reverse && media.reversed ? media.duration - (c.in + c.duration * c.speed) : c.in;
-    segs.push({ path, in: Math.max(0, srcIn), srcDur: c.duration * c.speed, start: c.start, duration: c.duration, speed: c.speed, volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 });
+    const seg = { path, in: Math.max(0, srcIn), srcDur: c.duration * c.speed, start: c.start, duration: c.duration, speed: c.speed, volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 };
+    if (c.curve && c.curve.length > 1) {
+      // ponytail: variable speed as n constant-speed pieces with exact boundaries; finer n if pitch steps are audible.
+      const n = clamp(Math.ceil(c.duration / 0.1), 4, 80), rev = c.reverse && media.reversed ? media : null, d = c.duration / n;
+      seg.pieces = [];
+      for (let i = 0; i < n; i++) {
+        const a = sourceTime(c, c.start + i * d, rev), b = sourceTime(c, c.start + (i + 1) * d, rev);
+        seg.pieces.push({ in: Math.max(0, a), srcDur: b - a, speed: (b - a) / d, duration: d });
+      }
+    }
+    const vk = c.kf && c.kf.volume;
+    if (vk && vk.length) {
+      // Volume keyframes → gain points in clip time (eased segments sampled), interpolated linearly by ffmpeg.
+      const ts = new Set([0, c.duration]);
+      vk.forEach((f, i) => {
+        ts.add(clamp(f.t, 0, c.duration));
+        const nx = vk[i + 1];
+        if (nx && f.ease !== 'linear') for (let j = 1; j < 12; j++) ts.add(f.t + ((nx.t - f.t) * j) / 12);
+      });
+      seg.volume = [...ts].sort((a, b) => a - b).map((x) => [+x.toFixed(4), +volumeAt(c, c.start + x).toFixed(4)]);
+    }
+    segs.push(seg);
   }
   if (range) return segs.filter((s) => s.start < range[1] && s.start + s.duration > range[0]);
   return segs;

@@ -70,19 +70,81 @@ export const projectDuration = (p) => p.clips.reduce((m, c) => Math.max(m, clipE
 export const mediaOf = (p, c) => p.media.find((m) => m.id === c.mediaId);
 export const trackOf = (p, c) => p.tracks.find((t) => t.id === c.trackId);
 
+// ---------- speed ----------
+export const MAX_SPEED = 100;
+// Speed curves: points {x: 0..1 position in the clip, y: relative speed}, linear in between.
+// The curve is normalized by its mean, so clip.speed stays the average speed and the clip keeps its
+// source span and duration; only how the span is spread over time changes.
+const P = (...a) => a.map(([x, y]) => ({ x, y }));
+export const SPEED_CURVES = {
+  montage: { name: 'Montaje', pts: P([0, 1.4], [0.3, 1.4], [0.42, 0.35], [0.58, 0.35], [0.7, 1.4], [1, 1.4]) },
+  hero: { name: 'Héroe', pts: P([0, 2], [0.38, 2], [0.5, 0.2], [0.62, 2], [1, 2]) },
+  bullet: { name: 'Bala', pts: P([0, 3], [0.3, 3], [0.42, 0.15], [0.58, 0.15], [0.7, 3], [1, 3]) },
+  flashIn: { name: 'Destello entrada', pts: P([0, 5], [0.2, 5], [0.4, 0.8], [1, 0.8]) },
+  flashOut: { name: 'Destello salida', pts: P([0, 0.8], [0.6, 0.8], [0.8, 5], [1, 5]) },
+  custom: { name: 'Personalizada', pts: P([0, 1], [0.33, 1], [0.66, 1], [1, 1]) },
+};
+export function curveSpeed(pts, u) {
+  if (u <= pts[0].x) return pts[0].y;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const a = pts[i], b = pts[i + 1];
+    if (u <= b.x) return b.x === a.x ? b.y : lerp(a.y, b.y, (u - a.x) / (b.x - a.x));
+  }
+  return pts[pts.length - 1].y;
+}
+// ∫0^u curve (exact for the piecewise-linear curve).
+export function curveArea(pts, u) {
+  let s = Math.min(u, pts[0].x) * pts[0].y;
+  for (let i = 0; i < pts.length - 1 && u > pts[i].x; i++) {
+    const a = pts[i], b = pts[i + 1], w = b.x - a.x;
+    if (w <= 0) continue;
+    const k = Math.min(1, (u - a.x) / w);
+    s += w * (a.y * k + (b.y - a.y) * k * k / 2);
+  }
+  const last = pts[pts.length - 1];
+  return s + Math.max(0, u - last.x) * last.y;
+}
+// Part [a, b] of a curve rescaled to 0..1 (used by split: each half keeps the exact same mapping).
+export function subCurve(pts, a, b) {
+  const out = [{ x: 0, y: curveSpeed(pts, a) }];
+  for (const p of pts) if (p.x > a && p.x < b) out.push({ x: (p.x - a) / (b - a), y: p.y });
+  out.push({ x: 1, y: curveSpeed(pts, b) });
+  return out;
+}
+const hasCurve = (c) => c.curve && c.curve.length > 1;
+// Source seconds advanced after `local` timeline seconds into the clip.
+export function srcOffset(clip, local) {
+  if (!hasCurve(clip)) return local * clip.speed;
+  const d = clip.duration, u = clamp(local / d, 0, 1);
+  return (d * clip.speed * curveArea(clip.curve, u)) / curveArea(clip.curve, 1) + (local - u * d) * clip.speed;
+}
+// Instantaneous playback rate at timeline time t.
+export function speedAt(clip, t) {
+  if (!hasCurve(clip)) return clip.speed;
+  return (clip.speed * curveSpeed(clip.curve, clamp((t - clip.start) / clip.duration, 0, 1))) / curveArea(clip.curve, 1);
+}
+
 // Source media time shown at timeline time t (reverse clips play a reversed proxy).
 export function sourceTime(clip, t, media) {
-  const local = t - clip.start;
-  if (clip.reverse && media) {
-    const srcLen = clip.duration * clip.speed;
-    return media.duration - (clip.in + srcLen) + local * clip.speed;
-  }
-  return clip.in + local * clip.speed;
+  const off = srcOffset(clip, t - clip.start);
+  if (clip.reverse && media) return media.duration - (clip.in + clip.duration * clip.speed) + off;
+  return clip.in + off;
 }
 
 // ---------- keyframes ----------
+// Keys: transform props ('x', 'scale'…), 'volume', or 'group.prop' ('filter.contrast', 'mask.feather').
 export const KF_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity'];
-const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+// Easing per keyframe (applies to the segment that starts at it): named or cubic-bezier [x1, y1, x2, y2].
+export const EASES = { inOut: [0.65, 0, 0.35, 1], linear: [0, 0, 1, 1], in: [0.55, 0, 1, 0.45], out: [0, 0.55, 0.45, 1], back: [0.34, 1.56, 0.64, 1] };
+export const EASE_NAMES = { inOut: 'Suave', linear: 'Lineal', in: 'Acelerar', out: 'Frenar', back: 'Rebote' };
+export function bezier([x1, y1, x2, y2], x) {
+  const f = (a, b, t) => 3 * a * t * (1 - t) ** 2 + 3 * b * t * t * (1 - t) + t ** 3;
+  let lo = 0, hi = 1, t = x;
+  for (let i = 0; i < 30; i++) { if (f(x1, x2, t) < x) lo = t; else hi = t; t = (lo + hi) / 2; }
+  return f(y1, y2, t);
+}
+const cubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+export const easeFn = (e) => (k) => (!e ? cubic(k) : e === 'linear' ? k : bezier(Array.isArray(e) ? e : EASES[e] || EASES.inOut, k));
 export function kfValue(list, local, fallback) {
   if (!list || !list.length) return fallback;
   if (local <= list[0].t) return list[0].v;
@@ -92,16 +154,39 @@ export function kfValue(list, local, fallback) {
     const a = list[i], b = list[i + 1];
     if (local >= a.t && local <= b.t) {
       const k = b.t === a.t ? 1 : (local - a.t) / (b.t - a.t);
-      return lerp(a.v, b.v, a.ease === 'linear' ? k : ease(k));
+      return lerp(a.v, b.v, easeFn(a.ease)(k));
     }
   }
   return fallback;
 }
+export function baseValue(clip, key) {
+  const [g, k] = key.split('.');
+  if (k) return clip[g] ? clip[g][k] || 0 : 0;
+  return key in clip.transform ? clip.transform[key] : clip[key];
+}
+function setBase(clip, key, v) {
+  const [g, k] = key.split('.');
+  if (k) clip[g][k] = v; else if (key in clip.transform) clip.transform[key] = v; else clip[key] = v;
+}
+export const propAt = (clip, key, t) => kfValue(clip.kf && clip.kf[key], t - clip.start, baseValue(clip, key));
 export function transformAt(clip, t) {
   const local = t - clip.start, tr = clip.transform, out = { ...tr };
   for (const p of KF_PROPS) out[p] = kfValue(clip.kf && clip.kf[p], local, tr[p]);
   return out;
 }
+// Copy of clip[group] with its keyframed props resolved at t (same object when nothing is keyframed).
+export function groupAt(clip, group, t) {
+  const src = clip[group];
+  if (!src || !clip.kf) return src;
+  let out = src;
+  for (const key in clip.kf) {
+    if (!key.startsWith(group + '.') || !clip.kf[key].length) continue;
+    if (out === src) out = { ...src };
+    out[key.slice(group.length + 1)] = kfValue(clip.kf[key], t - clip.start, 0);
+  }
+  return out;
+}
+export const volumeAt = (clip, t) => propAt(clip, 'volume', t);
 
 // ---------- catalogs ----------
 // Filter presets expressed in the same adjustment space as manual controls.
@@ -230,20 +315,23 @@ export const fmtTime = (s, fps) => {
 };
 export const mediaUrl = (p) => window.api.mediaBase + encodeURIComponent(p);
 
-// Sets a transform prop; if the prop is keyframed, upserts a keyframe at the playhead instead.
-export function setTransformProp(clip, prop, value, t, fps = 30) {
-  const list = clip.kf && clip.kf[prop];
+// Sets a prop; if the prop is keyframed, upserts a keyframe at the playhead instead.
+export function setProp(clip, key, value, t, fps = 30) {
+  const list = clip.kf && clip.kf[key];
   if (list && list.length) {
     const local = clamp(t - clip.start, 0, clip.duration);
     const k = list.find((f) => Math.abs(f.t - local) < 0.5 / fps);
     if (k) k.v = value; else { list.push({ t: local, v: value }); list.sort((a, b) => a.t - b.t); }
-  } else clip.transform[prop] = value;
+  } else setBase(clip, key, value);
 }
-export function toggleKeyframe(clip, prop, t, fps = 30) {
+export function toggleKeyframe(clip, key, t, fps = 30) {
   clip.kf = clip.kf || {};
-  const list = (clip.kf[prop] = clip.kf[prop] || []);
+  const list = (clip.kf[key] = clip.kf[key] || []);
   const local = clamp(t - clip.start, 0, clip.duration);
   const i = list.findIndex((f) => Math.abs(f.t - local) < 0.5 / fps);
   if (i >= 0) list.splice(i, 1);
-  else { list.push({ t: local, v: kfValue(list, local, clip.transform[prop]) }); list.sort((a, b) => a.t - b.t); }
+  else { list.push({ t: local, v: kfValue(list, local, baseValue(clip, key)) }); list.sort((a, b) => a.t - b.t); }
+  if (!list.length) delete clip.kf[key];
 }
+// Keyframes of the clip sitting at the playhead (for the easing editor).
+export const kfsAt = (clip, t, fps = 30) => Object.values(clip.kf || {}).flatMap((l) => l.filter((f) => Math.abs(f.t - (t - clip.start)) < 0.5 / fps));

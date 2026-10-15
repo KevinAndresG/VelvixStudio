@@ -31,6 +31,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Subtítulos automáticos:** Whisper local (WebGPU/WASM), 12 idiomas, 3 modelos, tiempos por palabra, resaltado karaoke, re-estilizar todos, importar/exportar SRT.
 **Exportación:** MP4 H.264 (codificación GPU vía WebCodecs, ~50 fps a 1080p), WebM VP9, GIF, MP3, WAV; 480p–4K; 24–60 fps; 3 calidades; progreso, ETA, cancelar; guardar fotograma como PNG.
 **Transcripción (v1.1):** panel "Transcripción" (`TranscriptPanel.jsx` + `transcript.js`): borrar palabras corta ese tramo en todas las pistas con ripple; muletillas (eh, um, este…) y pausas detectadas por RMS del audio mezclado (umbral dB + pausa mínima) con lista previa marcable; subtítulos dinámicos (`wordAnim` pop/rebote/deslizar/aparecer sincronizado con cada palabra, `keyword` color en palabras clave, emojis automáticos, 5 presets nuevos ✦); buscar y reemplazar; vocabulario propio (difuso + «mal = Bien») aplicado tras transcribir; traducción local opus-mt en el worker de Whisper (pivote por inglés, ~80 MB por par).
+**Velocidad y keyframes (v1.2):** curvas de velocidad (`clip.curve`, puntos lineales normalizados por su media: `clip.speed` = velocidad media, la duración no cambia) con 5 presets (montaje, héroe, bala, destello entrada/salida) + editor de curva; `sourceTime`/`srcOffset`/`speedAt` en `model.js` mueven preview, export y audio (export: tramos de velocidad constante con `asplit`+`concat`); dividir conserva el mapeo exacto (`subCurve`); velocidad hasta 100× (sobre 16× el preview busca cuadro a cuadro). Keyframes genéricos por clave (`x`, `volume`, `filter.contrast`, `mask.feather`…: `propAt`, `groupAt`, `setProp`) para filtros, volumen (export: expresión de ganancia en ffmpeg) y máscara; easing por keyframe (Suave, Lineal, Acelerar, Frenar, Rebote o cubic-bezier propio) con editor de curva en el inspector.
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
 ## Plan por sesiones ⏳
@@ -49,11 +50,11 @@ Base común: las palabras con tiempos que ya da Whisper (`src/editor/captions.js
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 1 completa siguiendo las reglas de toda sesión.`
 
-### Sesión 2 — Velocidad y keyframes
+### Sesión 2 — Velocidad y keyframes ✅ (v1.2.0)
 Base común: el motor de keyframes de `model.js` (`kfValue`, `transformAt`) y el mapeo de tiempo de `sourceTime`.
-- [ ] #2 A — **Curvas de velocidad**: presets (montaje, héroe, bala, destello entrada/salida) + curva editable; preview, export y audio sincronizados.
-- [ ] #24 B — **Velocidad hasta 100×**.
-- [ ] #3 B — **Keyframes para filtros, volumen y máscara** (hoy solo transformación); editor de curvas de easing.
+- [x] ✅ #2 A — **Curvas de velocidad**: presets (montaje, héroe, bala, destello entrada/salida) + curva editable; preview, export y audio sincronizados.
+- [x] ✅ #24 B — **Velocidad hasta 100×**.
+- [x] ✅ #3 B — **Keyframes para filtros, volumen y máscara** (hoy solo transformación); editor de curvas de easing.
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 2 completa siguiendo las reglas de toda sesión.`
 
@@ -121,7 +122,7 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 
 ## Pruebas E2E (correr tras cada cambio)
 - `npx vite build` y luego `node e2e/full.cjs` → todas las features + exportación real a `e2e/out.mp4` (verificar con ffprobe: 330 frames, 11.0 s video y audio).
-- `full.cjs` también verifica la Sesión 1 (líneas `OK`/`FAIL`, sale con código 1 si algo falla). La traducción descarga opus-mt la primera vez.
+- `full.cjs` también verifica las Sesiones 1 y 2 (líneas `OK`/`FAIL`, sale con código 1 si algo falla) y exporta `out-cut.mp4` y `out-speed.mp4` (curvas + keyframes de volumen). La traducción descarga opus-mt la primera vez.
 - `node e2e/cap.cjs` → subtítulos automáticos. `node e2e/smoke.cjs` → capturas rápidas.
 - `PKG=1 node e2e/full.cjs` → lo mismo contra la app empaquetada (`npm run dist` antes).
 - Medios de prueba en `e2e/media/`.
@@ -138,6 +139,8 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - Las palabras de los subtítulos guardan `text` además de `s/e`: el corte con ripple reconstruye el contenido desde ellas.
 - `useStore(selector)` debe devolver referencias estables (nada de `.filter()` dentro del selector).
 - El preview se pausa durante la exportación (`state.exporting`).
+- Audio con curva: tras `atempo`+`apad` hay que re-sellar con `asetpts=N/SR/TB` o `concat` falla al azar con "Invalid data found when processing input" (y el audio sale cortado).
+- El video exportado dura `ceil(duración·fps)/fps`: con duraciones no alineadas a cuadros difiere hasta 1 cuadro del timeline.
 - Protocolo `app://` necesita MIME `.mjs` → `text/javascript` (lo pide onnxruntime para Whisper).
 
 ## Notas

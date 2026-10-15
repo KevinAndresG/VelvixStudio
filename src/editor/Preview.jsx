@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
-import { projectDuration, fmtTime, mediaOf, clipEnd, setTransformProp, transformAt } from '../engine/model.js';
+import { projectDuration, fmtTime, mediaOf, clipEnd, setProp, transformAt } from '../engine/model.js';
 import { renderFrame, activeVisual, textBounds, visualBounds } from '../engine/render.js';
 import { SourcePool } from '../engine/sources.js';
 import { Icon, IconBtn } from '../ui.jsx';
@@ -100,14 +100,14 @@ export default function Preview() {
           const sv = Math.abs(nx) < 0.012 && !ev.altKey, sh = Math.abs(ny) < 0.012 && !ev.altKey;
           if (sv) nx = 0; if (sh) ny = 0;
           setGuides({ v: sv, h: sh });
-          setTransformProp(c, 'x', nx, time, p.fps); setTransformProp(c, 'y', ny, time, p.fps);
+          setProp(c, 'x', nx, time, p.fps); setProp(c, 'y', ny, time, p.fps);
         } else if (mode === 'scale') {
           const ns = Math.max(0.02, tr0.scale * (Math.hypot(ev.clientX - cx, ev.clientY - cy) / Math.max(1, d0)));
-          setTransformProp(c, 'scale', Math.round(ns * 1000) / 1000, time, p.fps);
+          setProp(c, 'scale', Math.round(ns * 1000) / 1000, time, p.fps);
         } else if (mode === 'rotate') {
           let r = tr0.rotation + ((Math.atan2(ev.clientY - cy, ev.clientX - cx) - a0) * 180) / Math.PI;
           if (!ev.shiftKey) for (const snap of [-180, -90, 0, 90, 180]) if (Math.abs(r - snap) < 4) r = snap;
-          setTransformProp(c, 'rotation', Math.round(r * 10) / 10, time, p.fps);
+          setProp(c, 'rotation', Math.round(r * 10) / 10, time, p.fps);
         }
       }, key);
     };

@@ -1,5 +1,5 @@
 import { getState, setState, update, toast, setJob } from '../store.js';
-import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT } from '../engine/model.js';
+import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, clamp, srcOffset, subCurve, sourceTime, MAX_SPEED } from '../engine/model.js';
 
 const api = window.api;
 const PLAYABLE = ['h264', 'vp8', 'vp9', 'av1', 'hevc', 'theora'];
@@ -133,8 +133,15 @@ export function splitClip(c, t) {
   const right = structuredClone(c);
   right.id = uid();
   right.start = t; right.duration = c.duration - leftDur;
-  if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + leftDur * c.speed;
-  if (c.reverse) c.in = c.in + right.duration * c.speed;
+  const span = c.duration * c.speed, srcL = srcOffset(c, leftDur);
+  if (c.type === 'video' || c.type === 'audio' || c.type === 'image') right.in = c.reverse ? c.in : c.in + srcL;
+  if (c.reverse) c.in = c.in + span - srcL;
+  if (c.curve) {
+    // Each half keeps its part of the curve; speed = that part's average, so the mapping is unchanged.
+    const u = leftDur / c.duration;
+    right.curve = subCurve(c.curve, u, 1); c.curve = subCurve(c.curve, 0, u);
+    right.speed = (span - srcL) / right.duration; c.speed = srcL / leftDur;
+  }
   right.transition = null;
   if (c.words) { right.words = c.words.filter((w) => w.e > leftDur).map((w) => ({ ...w, s: w.s - leftDur, e: w.e - leftDur })); c.words = c.words.filter((w) => w.s < leftDur); }
   // Split keyframes between halves.
@@ -202,8 +209,8 @@ export function detachAudio() {
     const v = d.clips.find((x) => x.id === c.id);
     v.detached = true;
     const a = newClip('audio', {
-      mediaId: v.mediaId, name: `${v.name} (audio)`, start: v.start, duration: v.duration, in: v.in, speed: v.speed,
-      volume: v.volume || 1, fadeIn: v.fadeIn, fadeOut: v.fadeOut, audioFx: structuredClone(v.audioFx), fxPath: v.fxPath, reverse: v.reverse,
+      mediaId: v.mediaId, name: `${v.name} (audio)`, start: v.start, duration: v.duration, in: v.in, speed: v.speed, curve: v.curve ? structuredClone(v.curve) : null,
+      volume: v.volume || 1, kf: v.kf && v.kf.volume ? { volume: structuredClone(v.kf.volume) } : {}, fadeIn: v.fadeIn, fadeOut: v.fadeOut, audioFx: structuredClone(v.audioFx), fxPath: v.fxPath, reverse: v.reverse,
     });
     a.trackId = ensureTrack(d, 'audio', a.start, a.start + a.duration);
     d.clips.push(a); aid = a.id;
@@ -218,7 +225,7 @@ export async function freezeFrame() {
     || p.clips.find((x) => x.type === 'video' && x.trackId === mainTrack(p).id && t >= x.start && t < clipEnd(x));
   if (!c) return toast('Coloca el cursor sobre un video');
   const media = mediaOf(p, c);
-  const src = c.in + (t - c.start) * c.speed;
+  const src = sourceTime(c, t, null);
   const png = await api.frame(media.path, src);
   const info = await api.probe(png);
   const fm = { id: uid(), path: png, name: 'Congelado.png', ...info, type: 'image', thumb: png, strip: png };
@@ -259,12 +266,18 @@ export function setSpeed(clipId, speed, key) {
     const c = p.clips.find((x) => x.id === clipId);
     const media = mediaOf(p, c);
     const srcLen = c.duration * c.speed;
+    speed = clamp(speed, 0.1, MAX_SPEED);
     c.speed = speed;
     c.duration = Math.max(0.05, srcLen / speed);
     if (media && c.type !== 'image') c.duration = Math.min(c.duration, (media.duration - c.in) / speed);
     for (const k of Object.keys(c.kf || {})) c.kf[k].forEach((f) => { f.t = Math.min(f.t, c.duration); });
     packMain(p);
   }, key);
+}
+
+// Speed curve (null = constant speed). Duration stays: clip.speed is the curve's average.
+export function setCurve(clipId, pts, key) {
+  update((p) => { p.clips.find((x) => x.id === clipId).curve = pts ? structuredClone(pts) : null; }, key);
 }
 
 export function addText(preset = {}, content = 'Escribe aquí') {

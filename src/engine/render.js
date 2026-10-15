@@ -1,5 +1,5 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
-import { clamp, lerp, clipEnd, transformAt, effectiveFilter, mediaOf, isKeyword } from './model.js';
+import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword } from './model.js';
 
 // ---------- scratch canvases ----------
 const pool = new Map();
@@ -192,10 +192,10 @@ export function drawVisual(ctx, clip, t, drawable, W, H, opts = {}) {
   if (opacity <= 0) return;
   let { el, w: sw, h: sh } = drawable;
   if (clip.chroma && clip.chroma.on) { el = chromaKey(el, sw, sh, clip.chroma); sw = el.width; sh = el.height; }
-  const f = effectiveFilter(clip.filter);
+  const f = effectiveFilter(groupAt(clip, 'filter', t));
   let css = cssFilter(f, W);
   if (st.blur > 0) css = (css === 'none' ? '' : css + ' ') + `blur(${((st.blur * W) / 1920).toFixed(1)}px)`;
-  const mask = clip.mask && clip.mask.type !== 'none' ? clip.mask : null;
+  const mask = clip.mask && clip.mask.type !== 'none' ? groupAt(clip, 'mask', t) : null;
   const crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
   const layered = mask || needsOverlays(f) || opts.layer;
 
@@ -610,7 +610,7 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       if (t >= c.start && t < clipEnd(c)) {
         if (c.effect && c.effect.type !== 'none') applyEffect(ctx, c.effect, t - c.start, c.duration, W, H);
         if (c.filter) {
-          const f = effectiveFilter(c.filter);
+          const f = effectiveFilter(groupAt(c, 'filter', t));
           const [sc, sx] = scratch('fx-filter', W, H); sx.drawImage(ctx.canvas, 0, 0);
           ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = cssFilter(f, W); ctx.drawImage(sc, 0, 0); ctx.restore();
           if (needsOverlays(f)) filterOverlays(ctx, f, W, H, Math.floor(t * 24), false);

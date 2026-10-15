@@ -313,17 +313,41 @@ function atempoChain(speed) {
   if (Math.abs(s - 1) > 1e-3) f.push(`atempo=${s.toFixed(5)}`);
   return f;
 }
-// segs: [{ path, in, srcDur, start, duration, speed, volume, fadeIn, fadeOut }]
+// Gain filter: constant, or [[t, v], …] points in clip time as a sum of clipped ramps (piecewise linear, no nesting).
+function volumeFilter(v) {
+  if (!Array.isArray(v)) return v !== 1 ? `volume=${v.toFixed(3)}` : null;
+  let e = v[0][1].toFixed(4);
+  for (let i = 0; i < v.length - 1; i++) {
+    const [t0, a] = v[i], [t1, b] = v[i + 1];
+    if (t1 > t0 && a !== b) e += `+${((b - a) / (t1 - t0)).toFixed(5)}*(clip(t,${t0},${t1})-${t0})`;
+  }
+  return `volume='${e}':eval=frame`;
+}
+// segs: [{ path, in, srcDur, start, duration, speed, volume, fadeIn, fadeOut, pieces? }]
+// pieces (speed curves): [{ in, srcDur, speed, duration }] played back to back, each padded/trimmed to its exact length
+// and re-stamped (atempo+apad timestamps otherwise break concat with "Invalid data").
 function audioGraph(segs, total, firstInput) {
   const inputs = [], parts = [];
+  const fmt = 'aformat=sample_rates=48000:channel_layouts=stereo';
   segs.forEach((s, i) => {
     inputs.push('-i', s.path);
-    const f = [`atrim=start=${s.in.toFixed(4)}:duration=${s.srcDur.toFixed(4)}`, 'asetpts=PTS-STARTPTS', 'aformat=sample_rates=48000:channel_layouts=stereo', ...atempoChain(s.speed)];
-    if (s.volume !== 1) f.push(`volume=${s.volume.toFixed(3)}`);
+    let src = `[${firstInput + i}:a]`, f;
+    if (s.pieces) {
+      const n = s.pieces.length;
+      parts.push(`${src}${fmt},asplit=${n}${s.pieces.map((_, j) => `[s${i}p${j}]`).join('')}`);
+      s.pieces.forEach((p, j) => {
+        const ns = Math.round(p.duration * 48000);
+        parts.push(`[s${i}p${j}]atrim=start=${p.in.toFixed(5)}:duration=${p.srcDur.toFixed(5)},asetpts=PTS-STARTPTS,${[...atempoChain(p.speed), `apad=whole_len=${ns}`, `atrim=end_sample=${ns}`, 'asetpts=N/SR/TB'].join(',')}[s${i}q${j}]`);
+      });
+      parts.push(`${s.pieces.map((_, j) => `[s${i}q${j}]`).join('')}concat=n=${n}:v=0:a=1[s${i}c]`);
+      src = `[s${i}c]`; f = [];
+    } else f = [`atrim=start=${s.in.toFixed(4)}:duration=${s.srcDur.toFixed(4)}`, 'asetpts=PTS-STARTPTS', fmt, ...atempoChain(s.speed)];
+    const vol = volumeFilter(s.volume);
+    if (vol) f.push(vol);
     if (s.fadeIn > 0) f.push(`afade=t=in:d=${s.fadeIn}`);
     if (s.fadeOut > 0) f.push(`afade=t=out:st=${Math.max(0, s.duration - s.fadeOut).toFixed(4)}:d=${s.fadeOut}`);
     f.push(`adelay=${Math.round(s.start * 1000)}:all=1`);
-    parts.push(`[${firstInput + i}:a]${f.join(',')}[a${i}]`);
+    parts.push(`${src}${f.join(',')}[a${i}]`);
   });
   if (!segs.length) return { inputs: ['-f', 'lavfi', '-t', String(total), '-i', 'anullsrc=r=48000:cl=stereo'], filter: `[${firstInput}:a]anull[aout]` };
   const mix = segs.map((_, i) => `[a${i}]`).join('') + `amix=inputs=${segs.length}:normalize=0:duration=longest,apad,atrim=0:${total.toFixed(4)}[aout]`;

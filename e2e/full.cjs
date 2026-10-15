@@ -183,8 +183,109 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   const streams = Object.fromEntries(probe(OUT2).map((l) => { const [k, d] = l.split(','); return [k, +d]; }));
   check('#12 export tras el corte: video y audio con la nueva duración', Math.abs(streams.video - durCut) < 0.02 && Math.abs(streams.audio - durCut) < 0.1, `timeline ${durCut.toFixed(2)} s, video ${streams.video} s, audio ${streams.audio} s`);
 
+  await page.click('.export .btn:has-text("Listo")').catch(() => {});
+  // ---------- Sesión 2: velocidad y keyframes ----------
+  // Fresh timeline: clip1 (muted, bullet curve) on the main track + voz.wav (curve + volume keyframes).
+  const s2 = await page.evaluate(() => {
+    const { store, actions: A, model: M, sources: SR, render: R } = window.__velvix;
+    const { getState, setState, update } = store;
+    const o = {};
+    update((d) => { d.clips = []; d.markers = []; d.transcript = null; d.tracks = d.tracks.filter((t) => t.main); });
+    const media = getState().project.media;
+    const v = A.addToTimeline(media.find((m) => m.name === 'clip1.mp4'));
+    const a = A.addToTimeline(media.find((m) => m.name === 'voz.wav'), { at: 0 });
+    const clip = (id) => getState().project.clips.find((c) => c.id === id);
+    // #2 bullet curve: same duration and source span, slow in the middle, monotonic mapping.
+    const dur0 = clip(v).duration;
+    A.setCurve(v, M.SPEED_CURVES.bullet.pts);
+    const c = clip(v), N = 200;
+    const ts = Array.from({ length: N + 1 }, (_, i) => c.start + (c.duration * i) / N);
+    const st = ts.map((t) => M.sourceTime(c, t, null));
+    o.curve = { dur: [dur0, c.duration], end: st[N], span: c.in + c.duration * c.speed, mono: st.every((x, i) => !i || x > st[i - 1]),
+      edge: M.speedAt(c, c.start + 0.05), mid: M.speedAt(c, c.start + c.duration / 2) };
+    // #2 split in the middle of the curve: both halves reproduce the exact same mapping.
+    setState({ time: 3.1, selection: [v] }); A.splitAtPlayhead();
+    const halves = getState().project.clips.filter((x) => x.mediaId === c.mediaId).sort((x, y) => x.start - y.start);
+    o.split = Math.max(...ts.map((t, i) => { const h = halves.find((x) => t >= x.start && t <= x.start + x.duration + 1e-9); return Math.abs(M.sourceTime(h, t, null) - st[i]); }));
+    o.halves = halves.map((h) => +h.speed.toFixed(3) + '×' + h.curve.length);
+    // #2 audio follows the curve: contiguous pieces covering the whole source span.
+    A.setCurve(a, M.SPEED_CURVES.hero.pts);
+    update((d) => { d.clips.forEach((x) => { if (x.type === 'video') x.muted = true; }); });
+    const seg = SR.audioSegments(getState().project).find((s) => s.pieces);
+    const ca = clip(a);
+    o.pieces = { n: seg.pieces.length, src: seg.pieces.reduce((s, p) => s + p.srcDur, 0), span: ca.duration * ca.speed, dur: seg.pieces.reduce((s, p) => s + p.duration, 0), cd: ca.duration,
+      gap: Math.max(...seg.pieces.slice(1).map((p, i) => Math.abs(p.in - (seg.pieces[i].in + seg.pieces[i].srcDur)))) };
+    // #3 volume keyframes on the voice: silent until 2 s, full from 3 s (linear).
+    setState({ selection: [a] });
+    update((d) => { const x = d.clips.find((k) => k.id === a); x.kf = { volume: [{ t: 0, v: 0 }, { t: 2, v: 0, ease: 'linear' }, { t: 3, v: 1 }] }; });
+    o.vol = [1, 2.5, 4].map((t) => +M.volumeAt(clip(a), t).toFixed(2));
+    o.volSeg = JSON.stringify(SR.audioSegments(getState().project).find((s) => Array.isArray(s.volume)).volume.slice(0, 4));
+    // #24 speeds up to 100×
+    const t = A.addToTimeline(media.find((m) => m.name === 'clip2.mp4'), { at: 0, trackId: null });
+    const span = clip(t).duration * clip(t).speed;
+    A.setSpeed(t, 100); const d100 = clip(t).duration;
+    A.setSpeed(t, 250); o.fast = { d100, expect: span / 100, clamped: clip(t).speed };
+    update((d) => { d.clips = d.clips.filter((x) => x.id !== t); });
+    // #3 filter keyframes: brightness −80 → +80 changes the rendered frame over time.
+    const src = document.createElement('canvas'); src.width = 320; src.height = 180;
+    const sx = src.getContext('2d'); sx.fillStyle = '#808080'; sx.fillRect(0, 0, 320, 180);
+    const cv = document.createElement('canvas'); cv.width = 320; cv.height = 180; const x = cv.getContext('2d');
+    const k = M.newClip('video', { start: 0, duration: 4, filter: { ...M.DEFAULT_FILTER }, kf: { 'filter.brightness': [{ t: 0, v: -80 }, { t: 4, v: 80 }] } });
+    const stats = (t) => { x.clearRect(0, 0, 320, 180); R.drawVisual(x, k, t, { el: src, w: 320, h: 180 }, 320, 180); const p = x.getImageData(0, 0, 320, 180).data; let s = 0, n = 0; for (let i = 0; i < p.length; i += 4) { s += p[i]; if (p[i + 3] > 128) n++; } return [Math.round(s / (p.length / 4)), n]; };
+    o.filt = [stats(0)[0], stats(2)[0], stats(4)[0]];
+    // #3 mask keyframes: circle mask width 20% → 100% grows the visible area.
+    delete k.kf['filter.brightness'];
+    k.mask = { ...k.mask, type: 'circle', w: 0.2, h: 0.6, feather: 0 };
+    M.toggleKeyframe(k, 'mask.w', 0); M.setProp(k, 'mask.w', 0.2, 0); M.toggleKeyframe(k, 'mask.w', 4); M.setProp(k, 'mask.w', 1, 4);
+    o.mask = [stats(0)[1], stats(4)[1], k.mask.w];
+    // #3 easing curves: named presets and a custom cubic-bezier.
+    const L = (ease) => +M.kfValue([{ t: 0, v: 0, ease }, { t: 1, v: 1 }], 0.5, 0).toFixed(3);
+    o.ease = { linear: L('linear'), in: L('in'), out: L('out'), def: L(undefined), custom: L([0.9, 0, 0.9, 0.1]), back: +M.kfValue([{ t: 0, v: 0, ease: 'back' }, { t: 1, v: 1 }], 0.7, 0).toFixed(3) };
+    setState({ time: 1, selection: [v] });
+    return o;
+  });
+  console.log(JSON.stringify(s2, null, 1));
+  check('#2 curva bala: misma duración y tramo de origen', Math.abs(s2.curve.dur[0] - s2.curve.dur[1]) < 1e-9 && Math.abs(s2.curve.end - s2.curve.span) < 1e-6, JSON.stringify(s2.curve));
+  check('#2 curva bala: lenta en el centro, mapeo creciente', s2.curve.mono && s2.curve.mid < 0.2 * s2.curve.edge, s2.curve.mid.toFixed(2) + '× vs ' + s2.curve.edge.toFixed(2) + '×');
+  check('#2 dividir un clip con curva conserva el mapeo', s2.split < 1e-6 && s2.halves.length === 2, s2.halves.join(' | ') + ' err ' + s2.split);
+  check('#2 audio con curva: tramos contiguos que cubren todo', Math.abs(s2.pieces.src - s2.pieces.span) < 1e-6 && Math.abs(s2.pieces.dur - s2.pieces.cd) < 1e-6 && s2.pieces.gap < 1e-6, JSON.stringify(s2.pieces));
+  check('#24 velocidad 100× (y tope en 100×)', Math.abs(s2.fast.d100 - s2.fast.expect) < 1e-6 && s2.fast.clamped === 100, JSON.stringify(s2.fast));
+  check('#3 keyframes de volumen', s2.vol.join() === '0,0.5,1', s2.vol.join() + ' ' + s2.volSeg);
+  check('#3 keyframes de filtro cambian el cuadro', s2.filt[0] < s2.filt[1] && s2.filt[1] < s2.filt[2], s2.filt.join(' → '));
+  check('#3 keyframes de máscara', s2.mask[1] > s2.mask[0] * 3 && s2.mask[2] === 0.2, s2.mask.join(' / '));
+  check('#3 curvas de easing', s2.ease.linear === 0.5 && s2.ease.in < 0.4 && s2.ease.out > 0.6 && s2.ease.def === 0.5 && s2.ease.custom < 0.2 && s2.ease.back > 1, JSON.stringify(s2.ease));
+
+  // #2/#3 through the UI: curve preset button, curve editor, keyframe on a filter slider, easing editor.
+  await page.click('.tabs button:has-text("Velocidad")');
+  await page.click('.speed-curves button[data-curve="montage"]');
+  await page.waitForSelector('.curve-svg');
+  const ui1 = await page.evaluate(() => { const p = window.__velvix.store.getState().project; const c = p.clips.find((x) => x.id === window.__velvix.store.getState().selection[0]); return { pts: c.curve && c.curve.length, dots: document.querySelectorAll('.curve-pt').length }; });
+  check('#2 curva desde el inspector', ui1.pts === 6 && ui1.dots === 6, JSON.stringify(ui1));
+  await page.click('.tabs button:has-text("Ajustes")');
+  await page.click('.kf-btn[data-kf="filter.contrast"]');
+  await page.waitForSelector('.ease-svg');
+  await page.click('.ease-presets button:has-text("Frenar")');
+  const ui2 = await page.evaluate(() => { const s = window.__velvix.store.getState(); const c = s.project.clips.find((x) => x.id === s.selection[0]); return JSON.stringify(c.kf['filter.contrast']); });
+  check('#3 keyframe de filtro y easing desde el inspector', /"ease":"out"/.test(ui2), ui2);
+  await page.screenshot({ path: S + '/08-keyframes.png' });
+
+  // Real export: curved video + curved voice with volume keyframes; audio and video match the timeline.
+  const OUT3 = path.win32.normalize(path.join(S, 'out-speed.mp4'));
+  await app.evaluate(({ dialog }, out) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: out }); }, OUT3);
+  const durSp = await page.evaluate(() => Math.max(...window.__velvix.store.getState().project.clips.map((c) => c.start + c.duration)));
+  await page.click('button.btn.primary:has-text("Exportar")');
+  await page.waitForSelector('.export');
+  await page.click('.export .btn.primary');
+  for (let i = 0; i < 40; i++) { await page.waitForTimeout(2000); const t = await page.evaluate(() => document.querySelector('.export')?.innerText || ''); if (/completa|fall/.test(t)) break; }
+  await page.click('.export .btn:has-text("Listo")').catch(() => {});
+  const sp = Object.fromEntries(probe(OUT3).map((l) => { const [k, d] = l.split(','); return [k, +d]; }));
+  check('#2 export con curvas: video y audio con la duración del timeline', Math.abs(sp.video - Math.ceil(durSp * 30 - 1e-6) / 30) < 0.002 && Math.abs(sp.audio - durSp) < 0.05, `timeline ${durSp.toFixed(2)} s, video ${sp.video} s, audio ${sp.audio} s`);
+  const meanDb = (ss, t) => +(/mean_volume: (-?[\d.]+)/.exec(require('child_process').spawnSync(require(APP + '/node_modules/ffmpeg-static'), ['-ss', String(ss), '-t', String(t), '-i', OUT3, '-vn', '-af', 'volumedetect', '-f', 'null', '-']).stderr.toString()) || [0, -999])[1];
+  const db = [meanDb(0.1, 1.7), meanDb(3.2, 2)];
+  check('#3 export respeta los keyframes de volumen', db[0] < -60 && db[1] > -40, db.join(' dB → ') + ' dB');
+
   console.log('ERRORS:', errors.join('\n'));
-  console.log(fails.length ? 'SESSION1 FAILS: ' + fails.join(', ') : 'SESSION1 ALL OK');
+  console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   await app.close();
   if (fails.length || errors.length) process.exit(1);
 })().catch((e) => { console.error(e); process.exit(1); });

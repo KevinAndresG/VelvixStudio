@@ -2,10 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
-  DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, transformAt, kfValue, setTransformProp, toggleKeyframe, fmtTime, clipEnd, WORD_ANIMS,
+  DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
+  KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed,
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
-import { setSpeed, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
+import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
 import { presetStyle } from './MediaPanel.jsx';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
@@ -78,6 +79,7 @@ function ClipPanel({ clip, project, count }) {
       </h3>
       <Tabs tabs={tabs} value={cur} onChange={setTab} />
       <div className="insp-body">
+        <EaseSection clip={clip} />
         {cur === 'text' && <TextTab clip={clip} edit={edit} />}
         {cur === 'style' && <StyleTab clip={clip} edit={edit} />}
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
@@ -92,20 +94,23 @@ function ClipPanel({ clip, project, count }) {
   );
 }
 
-// ---------- keyframe-aware transform slider ----------
-function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset }) {
+// ---------- keyframe-aware slider (transform, filter.*, mask.*, volume) ----------
+function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset, edit }) {
   const time = useStore((s) => s.time);
   const fps = useStore((s) => s.project.fps);
-  const tr = transformAt(clip, time);
   const list = (clip.kf && clip.kf[prop]) || [];
   const local = time - clip.start;
   const onKf = list.some((f) => Math.abs(f.t - local) < 0.5 / fps);
   const inside = time >= clip.start && time <= clipEnd(clip);
+  const set = (v) => {
+    const fn = (c, p) => setProp(c, prop, v / scale, time, p.fps);
+    if (edit) edit(fn, 'kf-' + prop);
+    else update((p) => fn(p.clips.find((x) => x.id === clip.id), p), `kf-${prop}-${clip.id}`);
+  };
   return (
     <div className="kf-row">
-      <Slider label={label} value={tr[prop] * scale} min={min} max={max} step={step} unit={unit} reset={reset}
-        onChange={(v) => update((p) => { const c = p.clips.find((x) => x.id === clip.id); setTransformProp(c, prop, v / scale, time, p.fps); }, `tr-${prop}-${clip.id}`)} />
-      <button className={`kf-btn ${onKf ? 'on' : list.length ? 'has' : ''}`} disabled={!inside}
+      <Slider label={label} value={propAt(clip, prop, time) * scale} min={min} max={max} step={step} unit={unit} reset={reset} onChange={set} />
+      <button className={`kf-btn ${onKf ? 'on' : list.length ? 'has' : ''}`} disabled={!inside} data-kf={prop}
         title={onKf ? 'Quitar fotograma clave' : 'Agregar fotograma clave en el cursor'}
         onClick={() => update((p) => toggleKeyframe(p.clips.find((x) => x.id === clip.id), prop, time, p.fps))}>
         <Icon name="diamond" size={12} fill={onKf} />
@@ -114,12 +119,56 @@ function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset })
   );
 }
 
+// Easing of the keyframes under the playhead: presets + draggable cubic-bezier handles.
+function EaseSection({ clip }) {
+  const time = useStore((s) => s.time);
+  const fps = useStore((s) => s.project.fps);
+  const svg = useRef(null);
+  const ks = kfsAt(clip, time, fps);
+  if (!ks.length) return null;
+  const e = ks[0].ease;
+  const b = [...(Array.isArray(e) ? e : EASES[e || 'inOut'] || EASES.inOut)];
+  const setEase = (v, coalesce) => update((p) => { for (const k of kfsAt(p.clips.find((x) => x.id === clip.id), time, p.fps)) k.ease = v; }, coalesce ? `ease-${clip.id}` : null);
+  const S = 120, Y = (y) => S * 0.8 - y * S * 0.6, X = (x) => x * S; // y from -0.33 to 1.33
+  const path = 'M' + Array.from({ length: 41 }, (_, i) => `${X(i / 40)},${Y(bezier(b, i / 40))}`).join('L');
+  const drag = (i) => (ev) => {
+    ev.preventDefault();
+    const move = (m) => {
+      const r = svg.current.getBoundingClientRect();
+      const x = clamp((m.clientX - r.left) / r.width, 0, 1), y = clamp((S * 0.8 - ((m.clientY - r.top) / r.height) * S) / (S * 0.6), -0.5, 1.5);
+      const nb = [...b]; nb[i * 2] = +x.toFixed(3); nb[i * 2 + 1] = +y.toFixed(3);
+      b.splice(0, 4, ...nb);
+      setEase(nb, true);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const named = Array.isArray(e) ? null : e || 'inOut';
+  return (
+    <Section title={`Curva del fotograma clave (${ks.length})`}>
+      <div className="ease-row">
+        <svg ref={svg} className="ease-svg" viewBox={`0 0 ${S} ${S}`}>
+          <line x1={X(0)} y1={Y(0)} x2={X(1)} y2={Y(1)} className="ease-diag" />
+          <line x1={X(0)} y1={Y(0)} x2={X(b[0])} y2={Y(b[1])} className="ease-arm" />
+          <line x1={X(1)} y1={Y(1)} x2={X(b[2])} y2={Y(b[3])} className="ease-arm" />
+          <path d={path} className="ease-curve" />
+          {[0, 1].map((i) => <circle key={i} cx={X(b[i * 2])} cy={Y(b[i * 2 + 1])} r={6} className="ease-handle" onPointerDown={drag(i)} />)}
+        </svg>
+        <div className="ease-presets">
+          {Object.entries(EASE_NAMES).map(([k, v]) => <button key={k} className={named === k ? 'active' : ''} onClick={() => setEase(k === 'inOut' ? undefined : k)}>{v}</button>)}
+        </div>
+      </div>
+      <p className="hint">Cómo se llega al siguiente fotograma clave. Arrastra los puntos para una curva propia.</p>
+    </Section>
+  );
+}
+
 function BasicTab({ clip, edit, project, visual }) {
   const tr = clip.transform;
-  const hasKf = Object.values(clip.kf || {}).some((l) => l.length);
+  const hasKf = KF_PROPS.some((k) => clip.kf && clip.kf[k] && clip.kf[k].length);
   return (
     <>
-      <Section title="Transformar" right={hasKf && <button className="link" onClick={() => edit((c) => { c.kf = {}; })}>Quitar keyframes</button>}>
+      <Section title="Transformar" right={hasKf && <button className="link" onClick={() => edit((c) => { for (const k of KF_PROPS) delete c.kf[k]; })}>Quitar keyframes</button>}>
         <KfSlider clip={clip} prop="scale" label="Escala" min={1} max={500} step={1} unit="%" scale={100} reset={100} />
         <KfSlider clip={clip} prop="x" label="Posición X" min={-150} max={150} step={0.5} scale={100} reset={0} />
         <KfSlider clip={clip} prop="y" label="Posición Y" min={-150} max={150} step={0.5} scale={100} reset={0} />
@@ -129,7 +178,7 @@ function BasicTab({ clip, edit, project, visual }) {
           <button className={`btn sm ${tr.flipH ? 'active' : ''}`} onClick={() => edit((c) => { c.transform.flipH = !c.transform.flipH; })}>⇋ Voltear H</button>
           <button className={`btn sm ${tr.flipV ? 'active' : ''}`} onClick={() => edit((c) => { c.transform.flipV = !c.transform.flipV; })}>⇅ Voltear V</button>
           <button className="btn sm" onClick={() => edit((c) => { c.transform.rotation = ((c.transform.rotation || 0) + 90) % 360; })}>⟳ 90°</button>
-          <button className="btn sm" onClick={() => edit((c) => { c.transform = { ...c.transform, x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 }; c.kf = {}; })}>Restablecer</button>
+          <button className="btn sm" onClick={() => edit((c) => { c.transform = { ...c.transform, x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 }; for (const k of KF_PROPS) delete c.kf[k]; })}>Restablecer</button>
         </div>
       </Section>
       {visual && (
@@ -169,13 +218,12 @@ function MaskSection({ clip, edit }) {
       </div>
       {m.type !== 'none' && (
         <>
-          <Slider label="Posición X" value={m.x * 100} min={-60} max={60} onChange={(v) => set('x', v / 100, 'mx')} reset={0} />
-          <Slider label="Posición Y" value={m.y * 100} min={-60} max={60} onChange={(v) => set('y', v / 100, 'my')} reset={0} />
-          {m.type !== 'linear' && <Slider label="Ancho" value={m.w * 100} min={2} max={200} onChange={(v) => set('w', v / 100, 'mw')} />}
-          {m.type !== 'linear' && m.type !== 'mirror' && <Slider label="Alto" value={m.h * 100} min={2} max={200} onChange={(v) => set('h', v / 100, 'mh')} />}
-          {m.type === 'mirror' && <Slider label="Grosor" value={m.h * 100} min={2} max={200} onChange={(v) => set('h', v / 100, 'mh')} />}
-          <Slider label="Rotación" value={m.angle || 0} min={-180} max={180} unit="°" onChange={(v) => set('angle', v, 'ma')} reset={0} />
-          <Slider label="Difuminado" value={m.feather} min={0} max={100} onChange={(v) => set('feather', v, 'mf')} />
+          <KfSlider clip={clip} edit={edit} prop="mask.x" label="Posición X" min={-60} max={60} scale={100} reset={0} />
+          <KfSlider clip={clip} edit={edit} prop="mask.y" label="Posición Y" min={-60} max={60} scale={100} reset={0} />
+          {m.type !== 'linear' && <KfSlider clip={clip} edit={edit} prop="mask.w" label="Ancho" min={2} max={200} scale={100} />}
+          {m.type !== 'linear' && <KfSlider clip={clip} edit={edit} prop="mask.h" label={m.type === 'mirror' ? 'Grosor' : 'Alto'} min={2} max={200} scale={100} />}
+          <KfSlider clip={clip} edit={edit} prop="mask.angle" label="Rotación" min={-180} max={180} unit="°" reset={0} />
+          <KfSlider clip={clip} edit={edit} prop="mask.feather" label="Difuminado" min={0} max={100} />
           <Toggle label="Invertir" value={m.invert} onChange={(v) => set('invert', v)} />
         </>
       )}
@@ -203,7 +251,7 @@ function ChromaSection({ clip, edit }) {
   );
 }
 
-function FilterControls({ f, set, onAll }) {
+function FilterControls({ f, set, onAll, clip, edit }) {
   const adj = [
     ['exposure', 'Exposición'], ['brightness', 'Brillo'], ['contrast', 'Contraste'], ['saturation', 'Saturación'],
     ['temperature', 'Temperatura'], ['tint', 'Matiz'], ['hue', 'Tono'], ['fade', 'Desvanecer'],
@@ -213,11 +261,11 @@ function FilterControls({ f, set, onAll }) {
     <>
       <Section title="Filtro" right={onAll && <button className="link" onClick={onAll}>Aplicar a todos</button>}>
         <Select value={f.preset} options={Object.fromEntries(Object.entries(FILTER_PRESETS).map(([k, v]) => [k, v.name]))} onChange={(v) => set('preset', v)} />
-        {f.preset !== 'none' && <Slider label="Intensidad" value={f.intensity} min={0} max={100} unit="%" onChange={(v) => set('intensity', v, 'fi')} reset={100} />}
+        {f.preset !== 'none' && <KfSlider clip={clip} edit={edit} prop="filter.intensity" label="Intensidad" min={0} max={100} unit="%" reset={100} />}
       </Section>
       <Section title="Ajustes" right={<button className="link" onClick={() => adj.forEach(([k]) => set(k, 0))}>Restablecer</button>}>
         {adj.map(([k, label, min = -100, max = 100]) => (
-          <Slider key={k} label={label} value={f[k] || 0} min={min} max={max} onChange={(v) => set(k, v, 'f' + k)} reset={0} />
+          <KfSlider key={k} clip={clip} edit={edit} prop={'filter.' + k} label={label} min={min} max={max} reset={0} />
         ))}
       </Section>
     </>
@@ -226,7 +274,7 @@ function FilterControls({ f, set, onAll }) {
 
 function AdjustTab({ clip, edit }) {
   const set = (k, v, key) => edit((c) => { c.filter[k] = v; }, key);
-  return <FilterControls f={clip.filter} set={set} onAll={() => applyToAll(clip.id, 'filter')} />;
+  return <FilterControls f={clip.filter} set={set} clip={clip} edit={edit} onAll={() => applyToAll(clip.id, 'filter')} />;
 }
 
 function AnimTab({ clip, edit }) {
@@ -259,21 +307,30 @@ function AnimTab({ clip, edit }) {
   );
 }
 
-const speedToPos = (s) => Math.log(s / 0.1) / Math.log(100) * 100; // 0.1× … 10×
-const posToSpeed = (p) => Math.round(0.1 * Math.pow(100, p / 100) * 100) / 100;
+const speedToPos = (s) => Math.log(s / 0.1) / Math.log(MAX_SPEED / 0.1) * 100; // 0.1× … 100×
+const posToSpeed = (p) => { const s = 0.1 * Math.pow(MAX_SPEED / 0.1, p / 100); return s < 10 ? Math.round(s * 100) / 100 : Math.round(s); };
 function SpeedTab({ clip, media }) {
-  const presets = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10];
+  const presets = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 10, 20, 30, 50, 75, 100];
   const srcLen = clip.duration * clip.speed;
+  const curveKey = clip.curve && (Object.keys(SPEED_CURVES).find((k) => JSON.stringify(SPEED_CURVES[k].pts) === JSON.stringify(clip.curve)) || 'custom');
   return (
     <>
-      <Section title="Velocidad constante">
+      <Section title={clip.curve ? 'Velocidad media' : 'Velocidad constante'}>
         <div className="field slider">
-          <div className="field-head"><label>Velocidad</label><span className="num"><input type="number" min={0.1} max={10} step={0.05} value={clip.speed} onChange={(e) => +e.target.value > 0 && setSpeed(clip.id, Math.min(10, Math.max(0.1, +e.target.value)))} /><em>×</em></span></div>
-          <input type="range" min={0} max={100} step={0.5} value={speedToPos(clip.speed)} onChange={(e) => setSpeed(clip.id, posToSpeed(+e.target.value), 'speed-' + clip.id)} style={{ '--p': `${speedToPos(clip.speed)}%` }} />
+          <div className="field-head"><label>Velocidad</label><span className="num"><input type="number" min={0.1} max={MAX_SPEED} step={0.05} value={+clip.speed.toFixed(3)} onChange={(e) => +e.target.value > 0 && setSpeed(clip.id, +e.target.value)} /><em>×</em></span></div>
+          <input type="range" min={0} max={100} step={0.25} value={speedToPos(clip.speed)} onChange={(e) => setSpeed(clip.id, posToSpeed(+e.target.value), 'speed-' + clip.id)} style={{ '--p': `${speedToPos(clip.speed)}%` }} />
         </div>
         <div className="speed-presets">{presets.map((s) => <button key={s} className={clip.speed === s ? 'active' : ''} onClick={() => setSpeed(clip.id, s)}>{s}×</button>)}</div>
         <dl className="info"><dt>Duración original</dt><dd>{fmtTime(srcLen)}</dd><dt>Nueva duración</dt><dd>{fmtTime(clip.duration)}</dd></dl>
         <p className="hint">El tono de la voz se conserva al cambiar la velocidad.</p>
+      </Section>
+      <Section title="Curva de velocidad" defaultOpen={!!clip.curve}>
+        <div className="speed-curves">
+          <button className={!clip.curve ? 'active' : ''} onClick={() => setCurve(clip.id, null)}>Ninguna</button>
+          {Object.entries(SPEED_CURVES).map(([k, v]) => <button key={k} className={curveKey === k ? 'active' : ''} data-curve={k} onClick={() => setCurve(clip.id, v.pts)}>{v.name}</button>)}
+        </div>
+        {clip.curve && <CurveEditor clip={clip} />}
+        {clip.curve && <p className="hint">Arrastra los puntos (arriba = más rápido). Doble clic agrega o quita un punto. La duración no cambia: la velocidad de arriba es la media.</p>}
       </Section>
       {clip.type === 'video' && (
         <Section title="Dirección">
@@ -281,6 +338,45 @@ function SpeedTab({ clip, media }) {
         </Section>
       )}
     </>
+  );
+}
+
+// Speed curve editor: x = position in the clip, y = relative speed on a log scale (0.1× … 10×).
+function CurveEditor({ clip }) {
+  const time = useStore((s) => s.time);
+  const svg = useRef(null);
+  const W = 260, H = 120, pts = clip.curve;
+  const X = (x) => x * W, Y = (y) => H / 2 - (Math.log10(y) * H) / 2;
+  const fromEvent = (ev) => {
+    const r = svg.current.getBoundingClientRect();
+    return { x: clamp((ev.clientX - r.left) / r.width, 0, 1), y: +clamp(Math.pow(10, 1 - (2 * (ev.clientY - r.top)) / r.height), 0.1, 10).toFixed(2) };
+  };
+  const drag = (i) => (ev) => {
+    ev.preventDefault(); ev.stopPropagation();
+    let cur = pts;
+    const move = (m) => {
+      const q = fromEvent(m), next = cur.map((p) => ({ ...p }));
+      next[i].y = q.y;
+      if (i > 0 && i < cur.length - 1) next[i].x = +clamp(q.x, cur[i - 1].x + 0.01, cur[i + 1].x - 0.01).toFixed(3);
+      setCurve(clip.id, (cur = next), `curve-${clip.id}`);
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const add = (ev) => {
+    const q = fromEvent(ev);
+    setCurve(clip.id, [...pts, { x: +q.x.toFixed(3), y: +curveSpeed(pts, q.x).toFixed(2) }].sort((a, b) => a.x - b.x));
+  };
+  const remove = (i) => (ev) => { ev.stopPropagation(); if (i > 0 && i < pts.length - 1) setCurve(clip.id, pts.filter((_, j) => j !== i)); };
+  const u = (time - clip.start) / clip.duration;
+  return (
+    <svg ref={svg} className="curve-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" onDoubleClick={add}>
+      {[10, 1, 0.1].map((y) => <line key={y} x1={0} x2={W} y1={Y(y)} y2={Y(y)} className={y === 1 ? 'curve-one' : 'curve-grid'} />)}
+      <text x={3} y={10} className="curve-lbl">10×</text><text x={3} y={H / 2 - 3} className="curve-lbl">1×</text><text x={3} y={H - 3} className="curve-lbl">0.1×</text>
+      <polyline points={pts.map((p) => `${X(p.x)},${Y(p.y)}`).join(' ')} className="curve-line" />
+      {u >= 0 && u <= 1 && <line x1={X(u)} x2={X(u)} y1={0} y2={H} className="curve-head" />}
+      {pts.map((p, i) => <circle key={i} cx={X(p.x)} cy={Y(p.y)} r={5} className="curve-pt" onPointerDown={drag(i)} onDoubleClick={remove(i)} />)}
+    </svg>
   );
 }
 
@@ -300,7 +396,7 @@ function AudioTab({ clip, edit, media }) {
   return (
     <>
       <Section title="Volumen">
-        <Slider label="Volumen" value={Math.round(clip.volume * 100)} min={0} max={300} unit="%" onChange={(v) => edit((c) => { c.volume = v / 100; }, 'vol')} reset={100} />
+        <KfSlider clip={clip} edit={edit} prop="volume" label="Volumen" min={0} max={300} unit="%" scale={100} reset={100} />
         <Toggle label="Silenciar clip" value={clip.muted} onChange={(v) => edit((c) => { c.muted = v; })} />
         <Slider label="Fundido de entrada" value={clip.fadeIn} min={0} max={Math.min(10, clip.duration)} step={0.1} unit="s" onChange={(v) => edit((c) => { c.fadeIn = v; }, 'fin')} reset={0} />
         <Slider label="Fundido de salida" value={clip.fadeOut} min={0} max={Math.min(10, clip.duration)} step={0.1} unit="s" onChange={(v) => edit((c) => { c.fadeOut = v; }, 'fout')} reset={0} />
@@ -438,7 +534,7 @@ function StyleTab({ clip, edit }) {
 function EffectTab({ clip, edit }) {
   if (clip.filter) {
     const set = (k, v, key) => edit((c) => { c.filter[k] = v; }, key);
-    return <FilterControls f={clip.filter} set={set} />;
+    return <FilterControls f={clip.filter} set={set} clip={clip} edit={edit} />;
   }
   return (
     <Section title="Efecto">
