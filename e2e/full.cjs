@@ -110,11 +110,18 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
     const audio = await T.timelineAudio();
     o.audioSecs = audio ? audio.length / 16000 : 0;
     o.realSilences = audio ? T.silenceRanges(audio, { db: -40, min: 0.6 }).length : -1;
+    // Threshold follows the real audio level: a higher dB threshold marks more of the timeline as silent.
+    o.silentSecs = [-60, -30, -10].map((db) => +T.silenceRanges(audio, { db, min: 0.3 }).reduce((s, [a, b]) => s + b - a, 0).toFixed(2));
+    // Preview/export sync: what plays after the cut at t−removed is what played before at t.
+    const playing = (p, t) => p.clips.filter((c) => (c.type === 'video' || c.type === 'audio') && t >= c.start && t < c.start + c.duration)
+      .map((c) => c.mediaId + '@' + M.sourceTime(c, t, p.media.find((m) => m.id === c.mediaId)).toFixed(2)).sort().join(',');
+    const syncT = [7.2, 8.5, 10.4];
     // #12 ripple cut of the fillers: duration shrinks by exactly the removed time
     const p0 = getState().project, dur0 = Math.max(...p0.clips.map((c) => c.start + c.duration));
     o.removed = T.cutRanges(T.wordRanges(p0.transcript.words, T.fillerIndices(p0.transcript.words)), 'Muletillas');
     const p1 = getState().project, dur1 = Math.max(...p1.clips.map((c) => c.start + c.duration));
     o.dur = [dur0, dur1];
+    o.sync = syncT.map((t) => [playing(p0, t), playing(p1, t - o.removed)]);
     o.wordsLeft = p1.transcript.words.map((w) => w.text).join(' ');
     o.capAfter = p1.clips.filter((c) => c.caption).sort((a, b) => a.start - b.start).map((c) => c.text.content).join(' | ');
     const main = p1.clips.filter((c) => p1.tracks.find((t) => t.id === c.trackId).main).sort((a, b) => a.start - b.start);
@@ -132,6 +139,8 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   check('#13 detectar silencios por picos de audio', r.silence.join() === '1.12-1.88', r.silence.join());
   check('#13 audio de la línea de tiempo analizado', Math.abs(r.audioSecs - 11) < 0.2, r.audioSecs + ' s, ' + r.realSilences + ' pausas');
   check('#12 corte con ripple', Math.abs(r.dur[0] - r.dur[1] - r.removed) < 0.02 && r.mainGaps === 0, r.dur.join(' → ') + ' (−' + r.removed.toFixed(2) + ')');
+  check('#13 umbral según el nivel del audio', r.silentSecs[0] <= r.silentSecs[1] && r.silentSecs[1] <= r.silentSecs[2] && r.silentSecs[2] > r.silentSecs[0], r.silentSecs.join(' / ') + ' s silenciosos');
+  check('#12 lo que suena tras el corte coincide (preview y export usan sourceTime)', r.sync.every(([a, b]) => a && a === b), JSON.stringify(r.sync));
   check('#12 transcripción y subtítulos siguen al corte', !/(^| )(eh|um)( |$)/.test(r.wordsLeft) && !/(^| )(eh|um)( |$)/.test(r.capAfter), r.capAfter);
 
   // #12 through the UI: select a word in the transcript panel and press Supr.
@@ -148,8 +157,8 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   await page.evaluate(() => window.__velvix.store.update((d) => { d.transcript.words[2].text = 'mmm'; }));
   await page.click('.panel.transcript button:has-text("Detectar")');
   await page.waitForTimeout(3000);
-  const prev = await page.evaluate(() => ({ rows: document.querySelectorAll('.cut-row').length, btn: document.querySelector('.panel.transcript .btn.primary')?.innerText || '' }));
-  check('#13 vista previa de lo que se borra', prev.rows > 0 && /Quitar \d+ tramos/.test(prev.btn), JSON.stringify(prev));
+  const prev = await page.evaluate(() => ({ rows: document.querySelectorAll('.cut-row').length, btn: document.querySelector('.panel.transcript .btn.primary')?.innerText || '', struck: document.querySelectorAll('.tr-w.cut').length }));
+  check('#13 vista previa de lo que se borra', prev.rows > 0 && prev.struck > 0 && /Quitar \d+ tramos/.test(prev.btn), JSON.stringify(prev));
   await page.screenshot({ path: S + '/07-transcript.png' });
 
   // #9a translation with the local opus-mt model (downloads once).
@@ -161,6 +170,18 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   });
   check('#9a traducir texto es→en', /world/i.test(tr.out[0]), tr.out[0]);
   check('#9a traducir subtítulos', tr.ok, tr.caps);
+
+  // #12 export after the ripple cuts: video and audio both match the new timeline length.
+  const OUT2 = path.win32.normalize(path.join(S, 'out-cut.mp4'));
+  await app.evaluate(({ dialog }, out) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: out }); }, OUT2);
+  const durCut = await page.evaluate(() => Math.max(...window.__velvix.store.getState().project.clips.map((c) => c.start + c.duration)));
+  await page.click('button.btn.primary:has-text("Exportar")');
+  await page.waitForSelector('.export');
+  await page.click('.export .btn.primary');
+  for (let i = 0; i < 40; i++) { await page.waitForTimeout(2000); const t = await page.evaluate(() => document.querySelector('.export')?.innerText || ''); if (/completa|fall/.test(t)) break; }
+  const probe = (f) => require('child_process').execFileSync(require(APP + '/node_modules/ffprobe-static').path, ['-v', 'error', '-show_entries', 'stream=codec_type,duration', '-of', 'csv=p=0', f]).toString().trim().split(/\r?\n/);
+  const streams = Object.fromEntries(probe(OUT2).map((l) => { const [k, d] = l.split(','); return [k, +d]; }));
+  check('#12 export tras el corte: video y audio con la nueva duración', Math.abs(streams.video - durCut) < 0.02 && Math.abs(streams.audio - durCut) < 0.1, `timeline ${durCut.toFixed(2)} s, video ${streams.video} s, audio ${streams.audio} s`);
 
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'SESSION1 FAILS: ' + fails.join(', ') : 'SESSION1 ALL OK');

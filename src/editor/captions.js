@@ -64,6 +64,9 @@ export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
 
 let worker = null;
 const getWorker = () => (worker = worker || new Worker(new URL('./whisper.worker.js', import.meta.url), { type: 'module' }));
+// One job at a time: transcription and translation share the worker's onmessage.
+let queue = Promise.resolve();
+const exclusive = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
 
 // Speech → project.transcript.words (timeline seconds), with the user vocabulary applied.
 export function transcribe({ model, language }) {
@@ -72,7 +75,7 @@ export function transcribe({ model, language }) {
   if (!segs.length) { toast('No hay audio en la línea de tiempo', 'error'); return Promise.resolve(null); }
   const jobId = uid();
   setJob(jobId, { label: 'Extrayendo audio…', progress: 0 });
-  return new Promise(async (resolve) => {
+  return exclusive(() => new Promise(async (resolve) => {
     try {
       const raw = await window.api.captionsAudio(segs, projectDuration(p));
       const audio = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
@@ -92,7 +95,7 @@ export function transcribe({ model, language }) {
       setJob(jobId, { label: 'Cargando modelo…', progress: null });
       w.postMessage({ audio, model, language }, [audio.buffer]);
     } catch (e) { setJob(jobId, null); toast('Error: ' + e.message, 'error'); resolve(null); }
-  });
+  }));
 }
 
 export function captionsFromTranscript(style = 14, opts = {}) {
@@ -114,7 +117,7 @@ export async function generateCaptions({ model, language, style, emojis = false 
 // ---------- translation (opus-mt in the Whisper worker) ----------
 export const TRANSLATE_LANGS = { es: 'Español', en: 'Inglés', fr: 'Francés', de: 'Alemán', it: 'Italiano', pt: 'Portugués', ru: 'Ruso', zh: 'Chino', ar: 'Árabe', hi: 'Hindi', ja: 'Japonés (solo origen)', ko: 'Coreano (solo origen)' };
 export function translateTexts(texts, src, tgt, onProgress = () => {}) {
-  return new Promise((resolve, reject) => {
+  return exclusive(() => new Promise((resolve, reject) => {
     const w = getWorker();
     w.onmessage = ({ data }) => {
       if (data.type === 'download') onProgress('Descargando traductor (solo la primera vez)…', data.progress);
@@ -123,7 +126,7 @@ export function translateTexts(texts, src, tgt, onProgress = () => {}) {
       if (data.type === 'translated') resolve(data.texts);
     };
     w.postMessage({ task: 'translate', texts, src, tgt });
-  });
+  }));
 }
 export async function translateCaptions(src, tgt) {
   const caps = getState().project.clips.filter((c) => c.caption).sort((a, b) => a.start - b.start);

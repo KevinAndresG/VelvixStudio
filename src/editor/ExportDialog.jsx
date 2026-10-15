@@ -71,7 +71,7 @@ export default function ExportDialog({ onClose }) {
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d', { alpha: false });
     setState({ exporting: true }); // pauses the preview loop so export gets the GPU/main thread
-    const frames = Math.max(1, Math.ceil(duration * outFps));
+    const frames = Math.max(1, Math.ceil(duration * outFps - 1e-6)); // float slack: 9.2000000001 s must stay 276 frames
     const pctx = previewRef.current && previewRef.current.getContext('2d');
     let pending = null; // overlap JPEG encode + IPC of frame N with seeking frame N+1
     try {
