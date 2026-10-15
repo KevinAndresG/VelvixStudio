@@ -32,46 +32,91 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Exportación:** MP4 H.264 (codificación GPU vía WebCodecs, ~50 fps a 1080p), WebM VP9, GIF, MP3, WAV; 480p–4K; 24–60 fps; 3 calidades; progreso, ETA, cancelar; guardar fotograma como PNG.
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
-## Pendiente (siguientes fases) ⏳
-1. **Firma de código**: sin certificado, Windows SmartScreen avisa en la primera ejecución ("Más información → Ejecutar de todas formas"). Requiere comprar un certificado (OV/EV).
-2. **Curvas de velocidad** (rampas tipo montaje, bullet, héroe).
-3. **Keyframes** para filtros, volumen y máscara (hoy solo transformación).
-4. **Quitar fondo con IA** sin pantalla verde (modelo de segmentación) y **auto-reencuadre** 16:9 → 9:16.
-5. **Detección de ritmo** para cortar al compás; **auto-cortar silencios**.
-6. **Estabilización** (ffmpeg vidstab) y **seguimiento de movimiento** para texto/stickers.
-7. **LUTs .cube** y compositor WebGL (mejor rendimiento en 4K con muchos efectos).
-8. Plantillas de proyecto, stickers animados (GIF/Lottie), texto curvo/3D, estilos por palabra.
-9. Traducción de subtítulos, más voces TTS neuronales offline.
-10. Selección por caja en timeline, reordenar pistas, exportar rango, paquetes de proyecto portables (.velvix), copias de seguridad por versión.
-11. Interfaz en inglés (i18n), actualizaciones automáticas.
+## Plan por sesiones ⏳
+Cada sesión agrupa features que comparten código, para hacerlas juntas con un solo prompt y luego limpiar el contexto (`/clear`).
+Prioridad: **A** = muy pedido, **B** = útil, **C** = opcional. Los números (#) se mantienen para referencia.
 
-## Pendiente — investigación de usuarios (oct 2026) 🔎
-Lo que la gente más valora o reclama de CapCut y que aún NO tenemos. Prioridad: A = muy pedido, B = útil, C = opcional.
+**Reglas de toda sesión** (ya incluidas en el prompt): leer este archivo; correr `npx vite build && node e2e/full.cjs` antes y después; agregar una prueba E2E por cada feature nueva; marcar ✅ lo terminado aquí; commit; `npm run dist` y `PKG=1 node e2e/full.cjs`.
 
-| # | Prioridad | Feature | Por qué | Cómo (idea técnica) |
-|---|---|---|---|---|
-| 12 | A | **Edición por transcripción**: borrar texto = borrar ese tramo del video | Citado como el mayor ahorro de tiempo en videos hablados | Reusar palabras con tiempos de Whisper; panel de texto; borrar → `splitAtPlayhead` + delete + ripple |
-| 13 | A | **Quitar muletillas y pausas** ("eh", "este", "um", silencios) | Era gratis en CapCut y lo pasaron a Pro; muy reclamado | Sobre #12: lista de muletillas por idioma + umbral de silencio con picos de audio |
-| 14 | A | **Subtítulos dinámicos**: animación por palabra (pop, rebote), palabras clave en color, emojis automáticos | También pasó a Pro; muy usado en TikTok/Reels | Más presets en `drawText` por unidad; palabras clave por longitud/mayúsculas; emojis con un diccionario simple |
-| 15 | A | **Aislar voz / quitar música** (separar voz de fondo) | Pasó a Pro; muy pedido | Modelo ONNX tipo Demucs/MDX en worker (como Whisper) → 2 WAV (voz / instrumental) |
-| 16 | A | **Mejorar voz** (IA: voz de estudio) | Muy valorado junto con reducción de ruido | Modelo de mejora de voz ONNX, o cadena ffmpeg `arnndn` + EQ + compresor como versión ligera |
-| 17 | A | **Exportaciones largas confiables** (1 h+) | Queja recurrente: CapCut falla a mitad de exportaciones largas | Prueba E2E con un video de 60 min; vigilar memoria (bitmaps/decoders); reanudar si falla |
-| 18 | A | **Corrección de color pro**: HSL por color, curvas, ruedas lift/gamma/gain | La gente lo ve como hueco frente a VN/LumaFusion; CapCut PC lo tiene | Compositor WebGL (#7) con shader de curvas/LUT; UI de curvas y ruedas |
-| 19 | B | **Bajar música automáticamente cuando hay voz** (ducking) | Estándar en editores pro; ahorra mucho trabajo manual | Detección de voz con picos/Whisper → automatización de volumen; en export con `sidechaincompress` de ffmpeg |
-| 20 | B | **Buscar y reemplazar en subtítulos** + vocabulario propio (marcas, nombres) | Queja: los subtítulos automáticos fallan con marcas y acentos | Reemplazo en lote sobre clips con `caption`; lista de términos guardada |
-| 21 | B | **Detectar escenas** (dividir el video en cada cambio de plano) | Útil para reeditar material ya editado | `ffmpeg -vf scdet` → cortes automáticos |
-| 22 | B | **Presets por plataforma** al exportar (TikTok, Reels, Shorts, YouTube) + subtítulos quemados o SRT aparte | Flujo rápido que esperan los creadores | Presets de resolución/fps/bitrate en `ExportDialog` |
-| 23 | B | **Kit de marca**: colores, fuentes, logos y estilos de texto favoritos guardados | Pasó a Pro en CapCut | JSON en `userData`; panel "Mis estilos" |
-| 24 | B | **Velocidad hasta 100×** (hoy tope 10×) | CapCut PC llega a 100× en algunas versiones | Ampliar slider; `atempo` ya encadena; preview hasta 16× (tope de Chromium) y saltos por encima |
-| 25 | B | **Biblioteca local de sonidos y música libres** (CC0) | Las apps pierden pistas cuando caducan licencias; la gente quiere música sin riesgo | Paquete CC0 opcional descargable; nunca música con copyright |
-| 26 | C | **Video largo → clips cortos automáticos** (momentos destacados) | Promocionado por CapCut (AutoCut) | Heurística local: transcripción + energía de audio + escenas; un LLM opcional queda para después |
-| 27 | C | **Retoque facial / belleza** y **mejorar resolución con IA** | Existe en la app móvil; en PC sin confirmar | Modelos ONNX pesados; dejar para el final |
+### Sesión 1 — Transcripción y subtítulos inteligentes
+Base común: las palabras con tiempos que ya da Whisper (`src/editor/captions.js`).
+- [ ] #12 A — **Edición por transcripción**: panel de texto; borrar palabras = cortar ese tramo del timeline (con ripple).
+- [ ] #13 A — **Quitar muletillas y pausas** ("eh", "este", "um", silencios) en un clic, con vista previa de qué se borra. Umbral de silencio con los picos de audio.
+- [ ] #14 A — **Subtítulos dinámicos**: animación por palabra (pop, rebote, deslizar), palabras clave resaltadas en color, emojis automáticos. Nuevos presets.
+- [ ] #20 B — **Buscar y reemplazar** en todos los subtítulos + **vocabulario propio** (marcas y nombres) que se corrige solo tras transcribir.
+- [ ] #9a B — **Traducir subtítulos** (modelo ONNX local tipo opus-mt/NLLB, en el mismo worker que Whisper).
 
-Fuentes: [eesel.ai — alternativas a CapCut 2026](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar — comparativa de apps 2026](https://unstar.app/blog/capcut-inshot-vn-splice-lumafusion-video-editing-apps-ranked-2026), [Primal Video — herramientas IA de CapCut](https://primalvideo.com/guides/capcut-ai-tools/), [FilmCrux — CapCut en escritorio](https://www.filmcrux.com/blog/video-editing-capcut), [Filmora — reseña CapCut PC](https://filmora.wondershare.it/video-editor-review/capcut-for-pc.html), [CapCut — editor PC](https://www.capcut.com/resource/pc-professional-video-editor), [reseña CapCut AI 2026](https://marcandrews.com/?p=3178), [Adobe Community — pedidos de usuarios comparando con CapCut](https://community.adobe.com/t5/premiere-rush-discussions/add-auto-captions-in-premier-rush-same-as-capcut/m-p/14848208).
+> Prompt: `Lee PROGRESS.md y haz la Sesión 1 completa siguiendo las reglas de toda sesión.`
 
-**Ventajas que ya tenemos y que la gente reclama a CapCut:** todo gratis, sin marca de agua, sin cuenta, sin nube, sin términos que cedan derechos sobre tu contenido, sin riesgo de que la app desaparezca de una tienda y subtítulos funcionando sin internet.
+### Sesión 2 — Velocidad y keyframes
+Base común: el motor de keyframes de `model.js` (`kfValue`, `transformAt`) y el mapeo de tiempo de `sourceTime`.
+- [ ] #2 A — **Curvas de velocidad**: presets (montaje, héroe, bala, destello entrada/salida) + curva editable; preview, export y audio sincronizados.
+- [ ] #24 B — **Velocidad hasta 100×**.
+- [ ] #3 B — **Keyframes para filtros, volumen y máscara** (hoy solo transformación); editor de curvas de easing.
 
-**Orden sugerido:** 12 → 13 → 14 (mismo motor de transcripción), luego 2 (curvas de velocidad), 15–16 (audio IA), 17 (estabilidad), 7 + 18 (WebGL + color pro), resto.
+> Prompt: `Lee PROGRESS.md y haz la Sesión 2 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 3 — Audio con IA
+Base común: modelos ONNX en worker (igual que Whisper) + cadena de audio de ffmpeg en `main.cjs`.
+- [ ] #15 A — **Aislar voz / quitar música** (Demucs/MDX ONNX → WAV de voz y WAV instrumental).
+- [ ] #16 A — **Mejorar voz** (voz de estudio con IA; versión ligera con `arnndn` + EQ + compresor).
+- [ ] #19 B — **Ducking automático**: bajar la música cuando hay voz (`sidechaincompress` en export, automatización de volumen en preview).
+- [ ] #5a B — **Detección de ritmo**: marcadores en cada beat + "cortar al compás".
+- [ ] #9b C — **Voces TTS neuronales offline** (Piper ONNX) además de las de Windows.
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 3 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 4 — Timeline, proyectos y exportación robusta
+Base común: `Timeline.jsx`, `store.js`, `ExportDialog.jsx`, `main.cjs`.
+- [ ] #17 A — **Exportaciones largas confiables**: prueba E2E con video de 60 min; vigilar memoria (bitmaps, decoders); reintentar o reanudar si falla.
+- [ ] #22 B — **Presets por plataforma** (TikTok, Reels, Shorts, YouTube) + subtítulos quemados o SRT aparte + **exportar solo un rango**.
+- [ ] #10 B — **Selección por caja** en timeline, **reordenar pistas**, **paquete de proyecto portable** (.velvix con medios), **copias de seguridad por versión** y recuperación tras cierre inesperado.
+- [ ] #23 B — **Kit de marca**: colores, fuentes, logos y estilos de texto favoritos guardados.
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 4 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 5 — Motor WebGL y color profesional
+Base común: reemplazar los filtros CSS/canvas de `render.js` por shaders WebGL (mismo resultado en preview y export).
+- [ ] #7 A — **Compositor WebGL** (mejor rendimiento en 4K y con muchos efectos) + **LUTs .cube**.
+- [ ] #18 A — **Color pro**: HSL por color, curvas RGB, ruedas lift/gamma/gain, scopes (histograma / forma de onda).
+- [ ] #27a C — **Retoque facial ligero** (suavizado de piel con filtro bilateral en shader; sin IA).
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 5 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 6 — IA visual y análisis de video
+Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer después de las Sesiones 1 y 5 (usa transcripción y WebGL).
+- [ ] #4 A — **Quitar fondo con IA** sin pantalla verde (segmentación de personas) + **auto-reencuadre** 16:9 → 9:16 siguiendo la cara.
+- [ ] #6 B — **Estabilización** (ffmpeg vidstab) + **seguimiento de movimiento** para que texto/stickers sigan a un objeto.
+- [ ] #21 B — **Detectar escenas** y dividir automáticamente (`ffmpeg scdet`).
+- [ ] #26 C — **Video largo → clips cortos** (transcripción + energía de audio + escenas).
+- [ ] #27b C — **Mejorar resolución con IA** (upscaling).
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 6 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 7 — Contenido creativo
+Base común: catálogos de `model.js`, `drawText` en `render.js`, panel izquierdo.
+- [ ] #8 B — **Plantillas de proyecto**, **stickers animados** (GIF/Lottie), **texto curvo y 3D**, **estilos distintos por palabra**.
+- [ ] #25 B — **Biblioteca de música y efectos de sonido libres (CC0)**, descargable aparte; nunca música con copyright.
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión.`
+
+### Sesión 8 — Lanzamiento
+Al final, cuando las features estén listas.
+- [ ] #11 B — **Interfaz en inglés** (i18n, selector de idioma) + **actualizaciones automáticas** (electron-updater).
+- [ ] Revisar la marca "Velvix Studio" en el registro de marcas (WIPO / oficina local) antes de publicar.
+- [ ] Licencias: cambiar a build LGPL de ffmpeg si se va a vender; pantalla "Acerca de" con licencias de terceros.
+- [ ] #1 — **Firma de código** (requiere comprar certificado OV/EV; quita el aviso de SmartScreen). Es un trámite, no código.
+
+> Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión.`
+
+**Orden recomendado:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. La Sesión 4 puede adelantarse si aparecen fallos de exportación.
+
+### Contexto de la investigación de usuarios (oct 2026)
+Muletillas, subtítulos dinámicos, aislar voz y la mayoría de herramientas IA eran gratis en CapCut y pasaron a Pro; es la queja principal. También fallan exportaciones largas en la versión de escritorio. La edición por transcripción es la función que más tiempo ahorra según varias guías. VN y LumaFusion destacan por corrección de color y keyframes.
+
+**Ventajas que ya tenemos y que la gente reclama a CapCut:** todo gratis, sin marca de agua, sin cuenta, sin nube, sin términos que cedan derechos sobre tu contenido, sin riesgo de que la app desaparezca de una tienda, subtítulos sin internet.
+
+Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](https://unstar.app/blog/capcut-inshot-vn-splice-lumafusion-video-editing-apps-ranked-2026), [Primal Video](https://primalvideo.com/guides/capcut-ai-tools/), [FilmCrux](https://www.filmcrux.com/blog/video-editing-capcut), [Filmora](https://filmora.wondershare.it/video-editor-review/capcut-for-pc.html), [CapCut PC](https://www.capcut.com/resource/pc-professional-video-editor), [reseña CapCut AI 2026](https://marcandrews.com/?p=3178), [Adobe Community](https://community.adobe.com/t5/premiere-rush-discussions/add-auto-captions-in-premier-rush-same-as-capcut/m-p/14848208).
 
 ## Pruebas E2E (correr tras cada cambio)
 - `npx vite build` y luego `node e2e/full.cjs` → todas las features + exportación real a `e2e/out.mp4` (verificar con ffprobe: 330 frames, 11.0 s video y audio).
