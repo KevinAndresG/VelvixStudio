@@ -251,12 +251,14 @@ ipcMain.handle('package:import', async (_e, file) => {
   const p = header.project, id = crypto.randomBytes(6).toString('hex'), dir = path.join(DATA, 'imported', id), map = new Map();
   await fsp.mkdir(dir, { recursive: true });
   for (const [i, f] of header.files.entries()) {
+    if (!Number.isSafeInteger(f.size) || f.size < 0 || typeof f.name !== 'string') throw new Error('Paquete dañado');
     const dst = path.join(dir, `${i}-${f.name.replace(/[<>:"/\\|?*]+/g, '_')}`);
     if (f.size) await new Promise((res, rej) => fs.createReadStream(file, { start: pos, end: pos + f.size - 1 }).on('error', rej).pipe(fs.createWriteStream(dst)).on('finish', res).on('error', rej));
     else await fsp.writeFile(dst, '');
     pos += f.size; map.set(f.src, dst);
   }
-  for (const [o, k] of pathFields(p)) if (o[k]) o[k] = map.get(o[k]) || o[k];
+  // Only paths extracted from the package are kept: a crafted package must not point at other local or network (UNC) files.
+  for (const [o, k] of pathFields(p)) if (o[k]) o[k] = map.get(o[k]) || (k === 'path' ? '' : null);
   Object.assign(p, { id, createdAt: Date.now(), updatedAt: Date.now() });
   await fsp.writeFile(projFile(id), JSON.stringify(p));
   return id;

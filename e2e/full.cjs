@@ -609,6 +609,11 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
     const exists = await Promise.all(q.media.map((m) => window.api.fileExists(m.path)));
     return { r, id, same: q.clips.length === p.clips.length && q.media.length === p.media.length, moved: q.media.every((m, i) => m.path !== p.media[i].path && /imported/.test(m.path)), exists: exists.every(Boolean), listed: (await window.api.listProjects()).some((x) => x.id === id) };
   }, path.win32.normalize(path.join(S, 'gen', 'paquete.velvix')));
+  // A crafted package can't point the project at files outside it (e.g. a UNC share).
+  const evil = path.join(S, 'gen', 'evil.velvix'), hdr = Buffer.from(JSON.stringify({ project: { id: 'x', name: 'evil', media: [{ id: 'm', path: '\\\\evil\\share\\a.mp4', thumb: 'C:\\Windows\\win.ini' }], clips: [], tracks: [] }, files: [] }));
+  const len = Buffer.alloc(8); len.writeBigUInt64LE(BigInt(hdr.length)); require('fs').writeFileSync(evil, Buffer.concat([Buffer.from('VELVIXP1'), len, hdr]));
+  const ev = await page.evaluate(async (f) => { const q = await window.api.loadProject(await window.api.importPackage(f)); await window.api.deleteProject(q.id); return q.media[0]; }, evil);
+  check('#10 paquete manipulado: rutas ajenas al paquete se descartan', ev.path === '' && ev.thumb === null, JSON.stringify(ev));
   check('#10 paquete portable .velvix con medios (exportar e importar)', pk.r.files >= 2 && pk.same && pk.moved && pk.exists && pk.listed, JSON.stringify(pk));
 
   // #10 version history from the home screen: restore an older version.
