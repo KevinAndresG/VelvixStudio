@@ -103,7 +103,7 @@ Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer des
 
 ### Sesión 7 — Contenido creativo
 Base común: catálogos de `model.js`, `drawText` en `render.js`, panel izquierdo.
-- [ ] #8 B — **Plantillas de proyecto**, **stickers animados** (GIF/Lottie), **texto curvo y 3D**, **estilos distintos por palabra**.
+- [ ] #8 B — **Plantillas de proyecto**, **stickers animados como like y follow cosas para insentivar a seguir comentar compartir etc en instagram facebook youtube tiktok etc** (GIF/Lottie), **texto curvo y 3D**, **estilos distintos por palabra**.
 - [ ] #25 B — **Biblioteca de música y efectos de sonido libres (CC0)**, descargable aparte; nunca música con copyright.
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits).`
