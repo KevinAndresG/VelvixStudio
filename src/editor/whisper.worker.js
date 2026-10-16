@@ -136,10 +136,10 @@ async function faces({ url, frames }) {
   self.postMessage({ type: 'faces', faces: out });
 }
 
-// Real-ESRGAN (4×) of one rgb24 frame, in 192 px tiles with 12 px of context (bounded memory at any size),
+// Real-ESRGAN (4×) of one rgb24 frame, in 320 px tiles with 12 px of context (bounded memory at any size),
 // then resized to outW×outH. Returns RGBA.
 async function upscale({ url, frame, w, h, outW, outH }) {
-  const s = await vision(url), T = 192, M = 12, W4 = w * 4, H4 = h * 4, big = new Uint8ClampedArray(W4 * H4 * 4);
+  const s = await vision(url), T = 320, M = 12, W4 = w * 4, H4 = h * 4, big = new Uint8ClampedArray(W4 * H4 * 4);
   for (let y0 = 0; y0 < h; y0 += T) for (let x0 = 0; x0 < w; x0 += T) {
     const ax = Math.max(0, x0 - M), ay = Math.max(0, y0 - M), bx = Math.min(w, x0 + T + M), by = Math.min(h, y0 + T + M), tw = bx - ax, th = by - ay, P = tw * th;
     const inp = new Float32Array(3 * P);

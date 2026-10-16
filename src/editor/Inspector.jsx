@@ -3,7 +3,7 @@ import { useStore, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
   DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
-  KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed, trackOf, vidSrc,
+  KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed, trackOf, vidSrc, matteOn,
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
@@ -225,7 +225,8 @@ function AiTab({ clip, edit, media, project }) {
   const [thr, setThr] = useState(10);
   if (!media) return null;
   const video = clip.type === 'video', v = video ? vidSrc(clip, media) : null, alt = v && v.alt ? clip.alt : null;
-  const m = clip.matte, mValid = m && m.src === (video ? v.path : media.path);
+  const m = clip.matte, mValid = m && matteOn({ ...clip, matte: { ...m, on: true } }, media);
+  const stale = video && clip.alt && !v.alt; // reversed, relinked or trimmed beyond the processed part
   const hd = Math.min(media.width, media.height) >= 1080;
   return (
     <>
@@ -234,7 +235,7 @@ function AiTab({ clip, edit, media, project }) {
           <Toggle label="Fondo quitado" value={m.on} onChange={(x) => edit((c) => { c.matte.on = x; })} />
           <Slider label="Suavidad del borde" value={m.edge ?? 60} min={0} max={100} onChange={(x) => edit((c) => { c.matte.edge = x; }, 'medge')} reset={60} />
         </> : <button className="btn primary wide ai-bg" onClick={() => removeBackground(clip.id)}><Icon name="wand" size={15} /> {m ? 'Volver a quitar el fondo' : 'Quitar fondo con IA'}</button>}
-        <p className="hint">{m && !mValid ? 'El video cambió (invertido, estabilizado o mejorado): vuelve a calcularlo. ' : ''}Separa a la persona del fondo sin pantalla verde; debajo se ve el fondo del lienzo u otra pista.</p>
+        <p className="hint">{m && !mValid ? 'El clip cambió (invertido, alargado, estabilizado o mejorado): vuelve a calcularlo. ' : ''}Separa a la persona del fondo sin pantalla verde; debajo se ve el fondo del lienzo u otra pista.</p>
       </Section>
       <Section title="Reencuadre">
         <button className="btn wide ai-face" onClick={() => reframeClip(clip.id)}><Icon name="smile" size={15} /> Seguir la cara ({project.aspect})</button>
@@ -257,6 +258,7 @@ function AiTab({ clip, edit, media, project }) {
         <dl className="info"><dt>Resolución</dt><dd>{alt && alt.up ? `${alt.up.w}×${alt.up.h} (mejorado)` : `${media.width}×${media.height}`}</dd></dl>
         {!(alt && alt.up) && <button className="btn wide ai-up" disabled={hd} onClick={() => upscaleClip(clip.id)}><Icon name="zoomIn" size={15} /> {hd ? 'Ya está en alta resolución' : `Mejorar a ${media.width * 2}×${media.height * 2} con IA`}</button>}
         {alt && <button className="btn wide ai-reset" onClick={() => resetVideo(clip.id)}>Restablecer el video original</button>}
+        {stale && <p className="hint warn">El clip cambió (invertido o alargado) y ya no coincide con la parte estabilizada/mejorada: se ve el original. Vuelve a aplicarlo.</p>}
         <p className="hint">Duplica la resolución con Real-ESRGAN (local). En video tarda: procesa cuadro a cuadro.</p>
       </Section>
     </>

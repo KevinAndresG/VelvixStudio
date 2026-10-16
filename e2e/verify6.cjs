@@ -31,10 +31,10 @@ const frameCount = (f) => grab(f, { n: 100000, w: 16, h: 16 }).length;
     '-filter_complex', '[1:v]scale=540:675[p];[0:v][p]overlay=x=40+110*t:y=45:shortest=1,format=yuv420p', '-t', '6', '-c:v', 'libx264', '-g', '30', f));
   // Still photo with random hand-held jitter (and a 440 Hz tone, to check the audio stays).
   const SHAKY = gen('temblor.mp4', (f) => ff('-loop', '1', '-i', FACE, '-f', 'lavfi', '-i', 'sine=f=440:d=4', '-filter_complex',
-    '[0:v]scale=1400:800,crop=1280:720:60+40*sin(n*2.1)+18*sin(n*0.77):40+30*cos(n*1.73)+12*sin(n*0.91),fps=30,format=yuv420p[v]', '-map', '[v]', '-map', '1:a', '-t', '4', '-c:v', 'libx264', '-c:a', 'aac', f));
+    '[0:v]scale=1400:800,setsar=1,crop=1280:720:60+40*sin(n*2.1)+18*sin(n*0.77):40+30*cos(n*1.73)+12*sin(n*0.91),fps=30,format=yuv420p[v]', '-map', '[v]', '-map', '1:a', '-t', '4', '-c:v', 'libx264', '-c:a', 'aac', f));
   // Patterned square moving on a circle over a static picture: center (640 + 300·cos 1.5t, 360 + 180·sin 1.5t).
   const TRACK = gen('seguimiento.mp4', (f) => ff('-loop', '1', '-i', FACE, '-f', 'lavfi', '-i', 'color=c=white:s=60x60:r=30:d=4', '-filter_complex',
-    '[0:v]scale=1280:720,boxblur=4,fps=30[bg];[1:v]drawbox=x=15:y=15:w=30:h=30:c=black:t=fill,drawbox=x=0:y=0:w=15:h=15:c=red:t=fill[sq];[bg][sq]overlay=x=610+300*cos(1.5*t):y=330+180*sin(1.5*t):shortest=1,format=yuv420p', '-t', '4', '-c:v', 'libx264', f));
+    '[0:v]scale=1280:720,setsar=1,boxblur=4,fps=30[bg];[1:v]drawbox=x=15:y=15:w=30:h=30:c=black:t=fill,drawbox=x=0:y=0:w=15:h=15:c=red:t=fill[sq];[bg][sq]overlay=x=610+300*cos(1.5*t):y=330+180*sin(1.5*t):shortest=1,format=yuv420p', '-t', '4', '-c:v', 'libx264', f));
   // Three shots of 2 s: cuts at 2.0 s and 4.0 s.
   const SCENES = gen('escenas.mp4', (f) => ff('-i', path.join(MEDIA, 'clip1.mp4'), '-i', PAN, '-i', path.join(MEDIA, 'clip2.mp4'), '-filter_complex',
     [0, 1, 2].map((i) => `[${i}:v]trim=0:2,setpts=PTS-STARTPTS,scale=1280:720,fps=30,format=yuv420p[v${i}]`).join(';') + ';[v0][v1][v2]concat=n=3:v=1:a=0', '-c:v', 'libx264', f));
@@ -190,6 +190,18 @@ const frameCount = (f) => grab(f, { n: 100000, w: 16, h: 16 }).length;
   // Reverse (Sesión 1 base): the stabilized copy no longer matches → original used (no stale picture).
   const rev = await ev(async () => { const { actions: A, store, model: M } = window.__velvix; await A.toggleReverse(); const p = store.getState().project, c = p.clips[0]; const r = M.vidSrc(c, M.mediaOf(p, c)).alt; await A.toggleReverse(); const q = store.getState().project; return [r, M.vidSrc(q.clips[0], M.mediaOf(q, q.clips[0])).alt]; });
   check('integración: invertir desactiva la copia estabilizada y al volver se recupera', rev[0] === false && rev[1] === true, JSON.stringify(rev));
+  // Trimming the clip longer than the processed part (copy and matte cover what it showed ± 0.5 s): the original
+  // is used again instead of frozen frames or a wrong matte, and comes back when trimmed inside again.
+  const trim = await ev(async () => {
+    const { vision, store, model: M } = window.__velvix;
+    store.update((d) => { const c = d.clips[0]; c.in = 1; c.duration = 1.5; c.alt = null; c.matte = null; });
+    const id = store.getState().project.clips[0].id;
+    await vision.stabilizeClip(id, 'low'); await vision.removeBackground(id);
+    const st = () => { const p = store.getState().project, c = p.clips[0], m = M.mediaOf(p, c); return [M.vidSrc(c, m).alt, M.matteOn(c, m)]; };
+    const a = st(); store.update((d) => { d.clips[0].duration = 3; }); const b = st(); store.update((d) => { d.clips[0].duration = 1.8; });
+    return [a, b, st()];
+  });
+  check('integración: alargar el clip fuera de la parte procesada vuelve al original', JSON.stringify(trim) === '[[true,true],[false,false],[true,true]]', JSON.stringify(trim));
 
   // ---------- #6 motion tracking ----------
   id = await only(TRACK);
@@ -268,6 +280,9 @@ const frameCount = (f) => grab(f, { n: 100000, w: 16, h: 16 }).length;
   const tUp = (Date.now() - t0) / 1000;
   const up = await ev(() => window.__velvix.store.getState().project.clips[0].alt);
   const upp = probe(up.path), nUp = frameCount(up.path), nLow = frameCount(LOW);
+  // WebGPU has no PRelu: the downloaded model is rewritten without it (else every layer runs on the CPU, ~6× slower).
+  const esr = fs.readFileSync(path.join(process.env.APPDATA, 'Velvix Studio', 'models', 'realesr-general-x4v3-webgpu.onnx'));
+  check('#27b modelo de mejora sin PRelu (todo en la GPU)', esr.includes('prelu0_a') && esr.includes('prelu32_e') && !esr.includes('prelu33_'), `${(tUp / nUp).toFixed(2)} s por cuadro`);
   // Quality against the 640×360 reference: PSNR and edge energy, vs. plain bicubic.
   const BIC = path.join(GEN, 'bicubica.mp4'); ff('-i', LOW, '-vf', 'scale=640:360:flags=bicubic', '-c:v', 'libx264', '-crf', '12', BIC);
   const psnr = (f) => +(/average:([\d.inf]+)/.exec(cp.spawnSync(FF, ['-hide_banner', '-i', f, '-i', REF, '-lavfi', 'psnr', '-f', 'null', '-'], { encoding: 'utf8' }).stderr) || [0, 0])[1];

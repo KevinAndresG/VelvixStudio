@@ -384,11 +384,39 @@ const MODEL_FILES = {
   // Real-ESRGAN realesr-general-x4v3 (SRVGGNetCompact, BSD-3) re-exported to ONNX from the official weights.
   modnet: ['modnet.onnx', 'https://huggingface.co/Xenova/modnet/resolve/fa2fa546052fba4c08921230a26cc69a333fca12/onnx/model.onnx'],
   ultraface: ['ultraface-rfb-320.onnx', 'https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx'],
-  esrgan: ['realesr-general-x4v3.onnx', 'https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/c6a971706797c7502945a2b4c4274fce4900d4ab/realesr-general-x4v3.onnx'],
+  esrgan: ['realesr-general-x4v3-webgpu.onnx', 'https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/c6a971706797c7502945a2b4c4274fce4900d4ab/realesr-general-x4v3.onnx', (b) => fixPrelu(b)],
 };
+
+// onnxruntime-web has no WebGPU PRelu: each of Real-ESRGAN's 33 PRelu ran on the CPU (~15× slower). Rewritten once
+// after download as Relu(x) − s·Relu(−x) (same output), editing the protobuf: ModelProto.graph = 7, GraphProto.node = 1.
+const varint = (b, p) => { let v = 0, m = 1, c; do { c = b[p++]; v += (c & 127) * m; m *= 128; } while (c & 128); return [v, p]; };
+const uvar = (n) => { const o = []; do { let c = n % 128; n = Math.floor(n / 128); if (n) c |= 128; o.push(c); } while (n); return Buffer.from(o); };
+function pbFields(b) {
+  const out = [];
+  for (let p = 0; p < b.length;) {
+    const s = p; let k; [k, p] = varint(b, p); const t = k & 7; let v = null;
+    if (t === 0) [, p] = varint(b, p); else if (t === 1) p += 8; else if (t === 5) p += 4;
+    else if (t === 2) { let n; [n, p] = varint(b, p); v = b.subarray(p, p + n); p += n; } else throw new Error('Modelo ONNX no válido');
+    out.push({ f: Math.floor(k / 8), t, v, raw: b.subarray(s, p) });
+  }
+  return out;
+}
+const pbLen = (f, buf) => Buffer.concat([uvar(f * 8 + 2), uvar(buf.length), buf]);
+const pbNode = (op, ins, outs, name) => pbLen(1, Buffer.concat([...ins.map((x) => pbLen(1, Buffer.from(x))), ...outs.map((x) => pbLen(2, Buffer.from(x))), pbLen(3, Buffer.from(name)), pbLen(4, Buffer.from(op))]));
+function fixPrelu(model) {
+  let n = 0;
+  return Buffer.concat(pbFields(model).map((F) => (F.f !== 7 || F.t !== 2 ? F.raw : pbLen(7, Buffer.concat(pbFields(F.v).map((G) => {
+    if (G.f !== 1 || G.t !== 2) return G.raw;
+    const nf = pbFields(G.v);
+    if (String(nf.find((x) => x.f === 4).v) !== 'PRelu') return G.raw;
+    const [x, s] = nf.filter((q) => q.f === 1).map((q) => String(q.v)), y = String(nf.find((q) => q.f === 2).v), id = `prelu${n++}_`;
+    return Buffer.concat([pbNode('Relu', [x], [id + 'p'], id + 'a'), pbNode('Neg', [x], [id + 'n'], id + 'b'), pbNode('Relu', [id + 'n'], [id + 'r'], id + 'c'),
+      pbNode('Mul', [id + 'r', s], [id + 'm'], id + 'd'), pbNode('Sub', [id + 'p', id + 'm'], [y], id + 'e')]);
+  }))))));
+}
 const downloads = new Map();
 function getModel(name, jobId) {
-  const [file, url] = MODEL_FILES[name];
+  const [file, url, fix] = MODEL_FILES[name];
   const out = path.join(MODELS, file);
   if (!downloads.has(name)) {
     downloads.set(name, (async () => {
@@ -404,6 +432,7 @@ function getModel(name, jobId) {
         if (jobId && total) send('job:progress', { jobId, progress: got / total });
       }
       await new Promise((r, j) => ws.end((e) => (e ? j(e) : r())));
+      if (fix) await fsp.writeFile(part, fix(await fsp.readFile(part)));
       await fsp.rename(part, out);
       return out;
     })().finally(() => downloads.delete(name)));

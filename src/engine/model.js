@@ -149,14 +149,23 @@ export function timeAtSource(clip, s, media) {
 // ---------- processed video (Sesión 6) ----------
 // clip.alt = { base, t0, dur, up, stab, path }: stabilized and/or upscaled copy of a range of the clip's source,
 // starting at source second t0. It replaces the picture (never the audio) while `base` is still the file the
-// clip plays (reversing or relinking makes it stale and the original is used again).
+// clip plays and the clip shows only that range (reversing, relinking or trimming the clip longer than the
+// copy makes it stale and the original is used again).
 export const basePath = (clip, media) => (clip.reverse && media.reversed) || media.proxy || media.path;
+// Whether the source seconds the clip shows fit in [t0, t0 + dur] (one frame of slack).
+const inside = (clip, media, t0, dur, fps) => sourceTime(clip, clip.start, media) >= t0 - 1 / fps && sourceTime(clip, clipEnd(clip), media) <= t0 + dur + 1 / fps;
 export function vidSrc(clip, media) {
   const base = basePath(clip, media), a = clip.alt;
-  return a && a.path && a.base === base ? { path: a.path, off: a.t0, dur: a.dur, alt: true } : { path: base, off: 0, dur: media.duration, alt: false };
+  return a && a.path && a.base === base && inside(clip, media, a.t0, a.dur, a.fps || 30) ? { path: a.path, off: a.t0, dur: a.dur, alt: true } : { path: base, off: 0, dur: media.duration, alt: false };
 }
 // Person matte (clip.matte, from the background removal model) usable for the picture the clip plays now.
-export const matteOn = (clip, media) => !!(clip.matte && clip.matte.on && media && clip.matte.src === (clip.type === 'image' ? media.path : vidSrc(clip, media).path));
+export function matteOn(clip, media) {
+  const m = clip.matte;
+  if (!m || !m.on || !media) return false;
+  if (clip.type === 'image') return m.src === media.path;
+  const v = vidSrc(clip, media);
+  return m.src === v.path && inside(clip, media, v.off + m.t0, m.n / m.fps, m.fps);
+}
 
 // ---------- keyframes ----------
 // Keys: transform props ('x', 'scale'…), 'volume', or 'group.prop' ('filter.contrast', 'mask.feather').

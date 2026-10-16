@@ -5,6 +5,7 @@
 import { getState, update, toast, setJob } from '../store.js';
 import { uid, clamp, clipEnd, mediaOf, trackOf, sourceTime, timeAtSource, vidSrc, basePath, transformAt, ASPECTS, projectDuration, mediaUrl, isKeyword } from '../engine/model.js';
 import { srcToCanvas, canvasToSrc, activeVisual, fitSize } from '../engine/render.js';
+import { loadMatte } from '../engine/gl.js';
 import { workerTask, cancelAI } from './audioai.js';
 import { splitClip, mainTrack, importPaths } from './actions.js';
 import { rippleDelete, timelineAudio } from './transcript.js';
@@ -79,9 +80,10 @@ export async function removeBackground(clipId) {
   if (!c || (c.type !== 'video' && c.type !== 'image')) return toast('Selecciona un video o una imagen'), null;
   const image = c.type === 'image', [iw, ih] = dims(media.width, media.height, INFER, 32), [sw, sh] = dims(media.width, media.height, STORE, 2);
   let fps = image ? 1 : Math.min(30, media.fps || 30);
-  let r = image ? { path: media.path, k0: 0, n: 1, fps: 1, t0: 0, ss: 0 } : range(c, media, fps);
+  // ±0.5 s so small trims keep the matte (it only applies while the clip shows its range).
+  let r = image ? { path: media.path, k0: 0, n: 1, fps: 1, t0: 0, ss: 0 } : range(c, media, fps, 0.5);
   // ponytail: whole matte in memory (~57 KB/frame); long clips drop to fewer mattes per second to stay under 250 MB.
-  if (!image && r.n * sw * sh > MATTE_MAX) { fps = Math.max(5, Math.floor((MATTE_MAX / (sw * sh)) / (r.n / fps))); r = range(c, media, fps); }
+  if (!image && r.n * sw * sh > MATTE_MAX) { fps = Math.max(5, Math.floor((MATTE_MAX / (sw * sh)) / (r.n / fps))); r = range(c, media, fps, 0.5); }
   const file = await api.cacheFile(`matte-${hash([r.path, await api.fileTag(r.path), r.k0, r.n, r.fps, iw, ih, sw, sh].join('|'))}.bin`);
   const ok = (await api.fileExists(file)) || await job('Quitando el fondo…', async (report, cancelled, id) => {
     const url = await modelUrl('modnet', id, report);
@@ -105,6 +107,7 @@ export async function removeBackground(clipId) {
     return true;
   }).catch(failed('Quitar fondo'));
   if (!ok) return null;
+  await loadMatte(file); // loaded before it applies: no frame of the clip drawn without it
   update((d) => {
     const x = d.clips.find((k) => k.id === clipId);
     if (x) x.matte = { on: true, path: file, src: r.path, t0: r.t0, fps: r.fps, n: r.n, w: sw, h: sh, edge: (x.matte && x.matte.edge) ?? 60 };
@@ -228,7 +231,7 @@ export async function autoReframe(aspect = '9:16') {
 export const STAB_LEVELS = { low: ['Suave', 10], med: ['Media', 30], high: ['Fuerte', 60] };
 // Range of the processed copy: the existing one while valid, else what the clip shows ± 0.5 s.
 function altRange(c, media) {
-  const base = basePath(c, media), a = c.alt && c.alt.base === base ? c.alt : null, fps = media.fps || 30;
+  const base = basePath(c, media), a = vidSrc(c, media).alt ? c.alt : null, fps = media.fps || 30;
   if (a) return { base, a, k0: a.k0, n: a.n, fps: a.fps };
   const r = range({ ...c, alt: null }, media, fps, 0.5);
   return { base, a: null, k0: r.k0, n: r.n, fps };
@@ -259,7 +262,7 @@ export async function upscaleClip(clipId) {
   const p = getState().project, c = clipById(clipId), media = c && mediaOf(p, c);
   if (!c || (c.type !== 'video' && c.type !== 'image')) return toast('Selecciona un video o una imagen'), null;
   if (Math.min(media.width, media.height) >= 1080) return toast('Este clip ya está en alta resolución (1080p o más)'), null;
-  if (c.type === 'video' && c.alt && c.alt.base === basePath(c, media) && c.alt.up) return toast('Este clip ya está mejorado'), null;
+  if (c.type === 'video' && vidSrc(c, media).alt && c.alt.up) return toast('Este clip ya está mejorado'), null;
   // Video needs even sizes (yuv420p); a photo keeps its exact size.
   const w = c.type === 'image' ? media.width : even(media.width), h = c.type === 'image' ? media.height : even(media.height), ow = w * 2, oh = h * 2;
   const upFrame = (url, frame) => workerTask({ task: 'upscale', url, frame, w, h, outW: ow, outH: oh }, [frame.buffer], 'upscaled').then((r) => r.rgba);
