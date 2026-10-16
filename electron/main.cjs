@@ -18,7 +18,8 @@ const CACHE = path.join(DATA, 'cache');
 const MODELS = path.join(DATA, 'models');
 const BACKUPS = path.join(PROJECTS, 'backups');
 const BRAND = path.join(DATA, 'brand');
-for (const d of [PROJECTS, CACHE, MODELS, BACKUPS, BRAND]) fs.mkdirSync(d, { recursive: true });
+const LUTS = path.join(DATA, 'luts');
+for (const d of [PROJECTS, CACHE, MODELS, BACKUPS, BRAND, LUTS]) fs.mkdirSync(d, { recursive: true });
 // Open project of the running session: still there on start = the app didn't close cleanly.
 const SESSION = path.join(DATA, 'session.json');
 const readSession = () => { try { return JSON.parse(fs.readFileSync(SESSION, 'utf8')); } catch { return null; } };
@@ -219,7 +220,7 @@ ipcMain.handle('projects:restore', async (_e, id, at) => {
 
 // ---------- portable package (.velvix): magic, header length, JSON header, then the files back to back ----------
 const MAGIC = Buffer.from('VELVIXP1');
-const pathFields = (p) => [...p.media.flatMap((m) => ['path', 'proxy', 'reversed', 'thumb', 'strip'].map((k) => [m, k])), ...p.clips.map((c) => [c, 'fxPath']), [p, 'thumb']];
+const pathFields = (p) => [...p.media.flatMap((m) => ['path', 'proxy', 'reversed', 'thumb', 'strip'].map((k) => [m, k])), ...p.clips.map((c) => [c, 'fxPath']), ...p.clips.filter((c) => c.filter).map((c) => [c.filter, 'lut']), [p, 'thumb']];
 ipcMain.handle('package:export', async (_e, id, out) => {
   const p = JSON.parse(await fsp.readFile(projFile(id), 'utf8'));
   const files = [], index = new Map();
@@ -275,6 +276,12 @@ ipcMain.handle('brand:set', (_e, b) => fsp.writeFile(BRAND_FILE, JSON.stringify(
 // Logos are copied in so they survive the original being moved or deleted.
 ipcMain.handle('brand:logo', async (_e, file) => {
   const out = path.join(BRAND, `${hash(file + Date.now())}${path.extname(file).toLowerCase()}`);
+  await fsp.copyFile(file, out);
+  return out;
+});
+// LUTs are copied in (like logos) so projects and packages don't depend on where the .cube came from.
+ipcMain.handle('lut:import', async (_e, file) => {
+  const out = path.join(LUTS, `${hash(file + Date.now())}.cube`);
   await fsp.copyFile(file, out);
   return out;
 });

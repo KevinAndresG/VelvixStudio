@@ -6,7 +6,8 @@ import { SourcePool } from '../engine/sources.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import { importPaths, addToTimeline } from './actions.js';
 
-let previewPool = null;
+let previewPool = null, previewCanvas = null;
+export const getPreviewCanvas = () => previewCanvas; // scopes read the frame from here
 
 // Renders the current frame at a given height (thumbnails / snapshots).
 export async function snapshotCanvas(height, type = 'image/jpeg') {
@@ -49,7 +50,7 @@ export default function Preview() {
       raf = requestAnimationFrame(tick);
       const s = getState(), p = s.project;
       if (!p || s.exporting) return;
-      const canvas = canvasRef.current; if (!canvas) return;
+      const canvas = (previewCanvas = canvasRef.current); if (!canvas) return;
       let t = s.time;
       if (s.playing) {
         const now = performance.now();

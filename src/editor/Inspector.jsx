@@ -9,6 +9,7 @@ import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
 import { presetStyle } from './MediaPanel.jsx';
 import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
+import ColorTab from './ColorTab.jsx';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
 function useEditor(clip) {
@@ -64,7 +65,7 @@ function ClipPanel({ clip, project, count }) {
   const visual = clip.type === 'video' || clip.type === 'image';
   const tabs = {};
   if (clip.type === 'text') Object.assign(tabs, { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
-  if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', anim: 'Animación', speed: 'Velocidad' });
+  if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', anim: 'Animación', speed: 'Velocidad' });
   if (clip.type === 'video' && media && (media.hasAudio || clip.fxPath)) tabs.audio = 'Audio';
   if (clip.type === 'audio') Object.assign(tabs, { audio: 'Audio', speed: 'Velocidad' });
   if (clip.type === 'effect') tabs.effect = clip.filter ? 'Filtro' : 'Efecto';
@@ -85,6 +86,7 @@ function ClipPanel({ clip, project, count }) {
         {cur === 'style' && <StyleTab clip={clip} edit={edit} />}
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
         {cur === 'adjust' && <AdjustTab clip={clip} edit={edit} />}
+        {cur === 'color' && <ColorTab clip={clip} edit={edit} />}
         {cur === 'anim' && <AnimTab clip={clip} edit={edit} />}
         {cur === 'speed' && <SpeedTab clip={clip} media={media} />}
         {cur === 'audio' && <AudioTab clip={clip} edit={edit} media={media} />}
@@ -96,7 +98,7 @@ function ClipPanel({ clip, project, count }) {
 }
 
 // ---------- keyframe-aware slider (transform, filter.*, mask.*, volume) ----------
-function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset, edit }) {
+export function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset, edit }) {
   const time = useStore((s) => s.time);
   const fps = useStore((s) => s.project.fps);
   const list = (clip.kf && clip.kf[prop]) || [];
@@ -554,7 +556,7 @@ function StyleTab({ clip, edit }) {
 function EffectTab({ clip, edit }) {
   if (clip.filter) {
     const set = (k, v, key) => edit((c) => { c.filter[k] = v; }, key);
-    return <FilterControls f={clip.filter} set={set} clip={clip} edit={edit} />;
+    return <><FilterControls f={clip.filter} set={set} clip={clip} edit={edit} /><ColorTab clip={clip} edit={edit} /></>;
   }
   return (
     <Section title="Efecto">

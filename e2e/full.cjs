@@ -649,8 +649,17 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   for (let i = 0; i < 20 && !rec; i++) { await new Promise((r) => setTimeout(r, 500)); rec = await inWin('(() => { const p = window.__velvix.store.getState().project; return p && document.querySelector(".editor") ? { id: p.id, n: p.clips.length } : null; })()').catch(() => null); }
   check('#10 recuperación tras cierre inesperado', /inesperada/.test(banner) && rec && rec.id === ver.id && rec.n === ver.n, banner.replace(/\s+/g, ' ').slice(0, 90));
 
+  await app.close();
+
+  // ---------- Sesión 5: motor WebGL y color profesional (own app instance, same PKG setting) ----------
+  const v5 = cp3.spawnSync(process.execPath, [path.join(__dirname, 'verify5.cjs')], { env: process.env, encoding: 'utf8', timeout: 600000 });
+  for (const line of (v5.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('verify5 ' + line);
+  }
+  if (v5.status !== 0 && !fails.length) fails.push(`verify5 terminó con código ${v5.status} ${(v5.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
-  await app.close();
   if (fails.length || errors.length) process.exit(1);
 })().catch((e) => { console.error(e); process.exit(1); });

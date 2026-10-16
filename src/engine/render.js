@@ -1,5 +1,6 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
 import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword } from './model.js';
+import { grade, needsGrade } from './gl.js';
 
 // ---------- scratch canvases ----------
 const pool = new Map();
@@ -7,7 +8,7 @@ function scratch(key, w, h) {
   let c = pool.get(key);
   if (!c) { c = document.createElement('canvas'); pool.set(key, c); }
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
-  const x = c.getContext('2d', { willReadFrequently: key.startsWith('chroma') });
+  const x = c.getContext('2d');
   x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; x.filter = 'none';
   return [c, x];
 }
@@ -88,61 +89,7 @@ export function cssFilter(f, W) {
   if (f.blur > 0) parts.push(`blur(${((f.blur * W) / 1920).toFixed(2)}px)`);
   return parts.length ? parts.join(' ') : 'none';
 }
-const needsOverlays = (f) => f && (f.temperature || f.tint || f.fade || f.vignette > 0 || f.grain > 0);
-// Draws color overlays that CSS filters can't express; 'source-atop' keeps them inside the clip's pixels.
-function filterOverlays(x, f, W, H, seed, atop = true) {
-  const op = (m) => (atop ? 'source-atop' : m);
-  x.save();
-  if (f.temperature) {
-    x.globalCompositeOperation = atop ? 'source-atop' : 'overlay';
-    x.globalAlpha = Math.min(1, Math.abs(f.temperature) / 260);
-    x.fillStyle = f.temperature > 0 ? '#ff8a00' : '#0077ff'; x.fillRect(0, 0, W, H);
-  }
-  if (f.tint) {
-    x.globalCompositeOperation = op('overlay'); x.globalAlpha = Math.min(1, Math.abs(f.tint) / 320);
-    x.fillStyle = f.tint > 0 ? '#ff00c8' : '#00ff55'; x.fillRect(0, 0, W, H);
-  }
-  if (f.fade) {
-    x.globalCompositeOperation = op('screen'); x.globalAlpha = clamp(f.fade / 100, -1, 1) * 0.55;
-    x.fillStyle = f.fade > 0 ? '#5a5a5a' : '#000'; x.fillRect(0, 0, W, H);
-  }
-  if (f.vignette > 0) {
-    x.globalCompositeOperation = op('source-over'); x.globalAlpha = 1;
-    const g = x.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.hypot(W, H) * 0.55);
-    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, `rgba(0,0,0,${Math.min(1, f.vignette / 100)})`);
-    x.fillStyle = g; x.fillRect(0, 0, W, H);
-  }
-  if (f.grain > 0) {
-    x.globalCompositeOperation = op('overlay'); x.globalAlpha = Math.min(1, f.grain / 120);
-    x.fillStyle = x.createPattern(noise(seed), 'repeat'); x.fillRect(0, 0, W, H);
-  }
-  x.restore();
-}
-
-// ---------- chroma key ----------
-function hexRgb(h) { const n = parseInt(h.slice(1, 7), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-function chromaKey(el, sw, sh, ck) {
-  const k = Math.min(1, 960 / sw), w = Math.max(1, Math.round(sw * k)), h = Math.max(1, Math.round(sh * k));
-  const [c, x] = scratch('chroma', w, h);
-  x.drawImage(el, 0, 0, w, h);
-  const img = x.getImageData(0, 0, w, h), d = img.data, [kr, kg, kb] = hexRgb(ck.color);
-  const sim = (ck.similarity / 100) * 255 * 1.2, smooth = Math.max(1, (ck.smooth / 100) * 255);
-  // Distance in chroma (Cb/Cr) space ignores brightness, which keys shadows on green screens better.
-  const kcb = -0.1687 * kr - 0.3313 * kg + 0.5 * kb, kcr = 0.5 * kr - 0.4187 * kg - 0.0813 * kb;
-  for (let i = 0; i < d.length; i += 4) {
-    const r = d[i], g = d[i + 1], b = d[i + 2];
-    const cb = -0.1687 * r - 0.3313 * g + 0.5 * b, cr = 0.5 * r - 0.4187 * g - 0.0813 * b;
-    const dist = Math.hypot(cb - kcb, cr - kcr);
-    if (dist < sim) d[i + 3] = 0;
-    else if (dist < sim + smooth) {
-      d[i + 3] = Math.round(255 * ((dist - sim) / smooth));
-      if (kg > kr && kg > kb) d[i + 1] = Math.min(g, (r + b) / 2 + 20); // de-spill green
-    }
-  }
-  x.putImageData(img, 0, 0);
-  return c;
-}
-
+const blurCss = (b, W) => (b > 0 ? `blur(${((b * W) / 1920).toFixed(2)}px)` : 'none');
 // ---------- visual clip ----------
 function maskPath(x, m, dw, dh) {
   const cx = m.x * dw, cy = m.y * dh, w = m.w * dw, h = m.h * dh;
@@ -191,13 +138,18 @@ export function drawVisual(ctx, clip, t, drawable, W, H, opts = {}) {
   const opacity = clamp(tr.opacity * st.opacity, 0, 1) * (opts.alpha ?? 1);
   if (opacity <= 0) return;
   let { el, w: sw, h: sh } = drawable;
-  if (clip.chroma && clip.chroma.on) { el = chromaKey(el, sw, sh, clip.chroma); sw = el.width; sh = el.height; }
   const f = effectiveFilter(groupAt(clip, 'filter', t));
-  let css = cssFilter(f, W);
-  if (st.blur > 0) css = (css === 'none' ? '' : css + ' ') + `blur(${((st.blur * W) / 1920).toFixed(1)}px)`;
+  let crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
+  if (needsGrade(f, clip.chroma)) {
+    // Graded at the size it will be drawn (capped at the source size), then drawn like the source.
+    const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
+    if (cw <= 0 || ch <= 0) return;
+    const k = Math.min(1, Math.max(W / cw, H / ch) * Math.max(1, Math.abs(tr.scale * st.scale)));
+    ({ el, w: sw, h: sh, crop } = grade(el, sw, sh, crop, f, clip.chroma, cw * k, ch * k, Math.floor(t * 24)));
+  }
+  const css = blurCss((f ? f.blur : 0) + st.blur, W);
   const mask = clip.mask && clip.mask.type !== 'none' ? groupAt(clip, 'mask', t) : null;
-  const crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
-  const layered = mask || needsOverlays(f) || opts.layer;
+  const layered = mask || opts.layer;
 
   if (!layered) {
     ctx.save();
@@ -221,7 +173,6 @@ export function drawVisual(ctx, clip, t, drawable, W, H, opts = {}) {
     maskPath(lx, mask, d.dw, d.dh); lx.fill();
   }
   lx.restore();
-  if (needsOverlays(f)) filterOverlays(lx, f, W, H, Math.floor(t * 24));
   if (opts.layer) return lc; // caller composites (transitions)
   ctx.save();
   ctx.globalAlpha = opacity; ctx.globalCompositeOperation = clip.blend || 'source-over';
@@ -611,9 +562,14 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
         if (c.effect && c.effect.type !== 'none') applyEffect(ctx, c.effect, t - c.start, c.duration, W, H);
         if (c.filter) {
           const f = effectiveFilter(groupAt(c, 'filter', t));
-          const [sc, sx] = scratch('fx-filter', W, H); sx.drawImage(ctx.canvas, 0, 0);
-          ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = cssFilter(f, W); ctx.drawImage(sc, 0, 0); ctx.restore();
-          if (needsOverlays(f)) filterOverlays(ctx, f, W, H, Math.floor(t * 24), false);
+          // Adjustment layer: grades everything below it.
+          const g = needsGrade(f) ? grade(ctx.canvas, W, H, { l: 0, t: 0, r: 0, b: 0 }, f, null, W, H, Math.floor(t * 24)) : null;
+          const css = blurCss(f.blur, W);
+          if (g || css !== 'none') {
+            const [sc, sx] = scratch('fx-filter', W, H);
+            if (g) sx.drawImage(g.el, 0, g.h - H, W, H, 0, 0, W, H); else sx.drawImage(ctx.canvas, 0, 0);
+            ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = css; ctx.drawImage(sc, 0, 0); ctx.restore();
+          }
         }
       }
       continue;

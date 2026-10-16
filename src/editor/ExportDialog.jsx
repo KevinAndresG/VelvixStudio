@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, setState, update, toast } from '../store.js';
 import { projectDuration, fmtTime, ASPECTS, clipEnd } from '../engine/model.js';
 import { renderFrame } from '../engine/render.js';
+import { preloadLuts } from '../engine/gl.js';
 import { ExportPool, audioSegments } from '../engine/sources.js';
 import { toSRT } from './captions.js';
 import { Icon, Select, Toggle, Modal } from '../ui.jsx';
@@ -117,6 +118,7 @@ export default function ExportDialog({ onClose }) {
         return;
       }
       setState({ exporting: true }); // pauses the preview loop so export gets the GPU/main thread
+      await preloadLuts(project);
       const frames = Math.max(1, Math.ceil(span * outFps - 1e-6)); // float slack: 9.2000000001 s must stay 276 frames
       const ok = await encodeFrames(job, frames, resumeFrom, t0);
       if (!ok) return;

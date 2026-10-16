@@ -13,6 +13,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 | `electron/main.cjs` | Ventana, servidor de medios en loopback (Range/seek), proyectos en `%APPDATA%/Velvix Studio/projects`, ffprobe/ffmpeg (miniaturas, waveforms, proxies, inversión, efectos de voz, TTS, mezcla de audio, exportación) |
 | `src/engine/model.js` | Modelo de datos, keyframes, catálogos (filtros, animaciones, transiciones, efectos, estilos de texto) |
 | `src/engine/render.js` | Compositor canvas único: lo usa la vista previa **y** la exportación (resultado idéntico) |
+| `src/engine/gl.js` | Shader WebGL2 de color (croma, piel, nitidez, ajustes, ruedas, curvas, HSL, LUT, viñeta, grano) que usa `render.js` |
 | `src/engine/sources.js` | Pool de `<video>/<audio>` para preview (WebAudio, volumen >100 %) + `ExportPool` |
 | `src/engine/decoder.js` | Decodificación secuencial WebCodecs + mp4box (frame-exacto, ~380 fps) |
 | `src/editor/*` | UI: panel de medios, preview con manipulación directa, timeline, inspector, exportación, subtítulos |
@@ -34,6 +35,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Velocidad y keyframes (v1.2):** curvas de velocidad (`clip.curve`, puntos lineales normalizados por su media: `clip.speed` = velocidad media, la duración no cambia) con 5 presets (montaje, héroe, bala, destello entrada/salida) + editor de curva; `sourceTime`/`srcOffset`/`speedAt` en `model.js` mueven preview, export y audio (export: tramos de velocidad constante estirados por separado con contexto y unidos con crossfade); dividir y recortar bordes conservan el mapeo exacto (`subClip`); velocidad hasta 100× (sobre 16× el preview busca cuadro a cuadro). Keyframes genéricos por clave (`x`, `volume`, `filter.contrast`, `mask.feather`…: `propAt`, `groupAt`, `setProp`) para filtros, volumen (export: expresión de ganancia en ffmpeg) y máscara; easing por keyframe (Suave, Lineal, Acelerar, Frenar, Rebote o cubic-bezier propio) con editor de curva en el inspector.
 **Audio con IA (v1.3):** `audioai.js` + worker de Whisper. **Aislar voz / quitar música** con MDX-Net (UVR Voc_FT ONNX, ~67 MB, descargado una vez por `main.cjs` a `%APPDATA%/Velvix Studio/models`): STFT/iSTFT propios (`engine/fft.js` FFT mixto 2·3·4·5 para n_fft 7680, `engine/mdx.js` igual que UVR), WebGPU con respaldo WASM; genera WAV de voz y de música (caché por archivo) y los pone en pistas nuevas (aislar voz / quitar voz / separar en 2 pistas). **Mejorar voz** (`audioFx.enhance`): pasa-altos, RNNoise `arnndn` (modelo `cb.rnnn` descargado), EQ y compresor. **Ducking automático** (`clip.duck` en dB): export con `sidechaincompress` por clip, preview con envolvente de voz desde los picos (`duckEnvelope`/`duckGain` en `sources.js`). **Detección de ritmo**: flujo espectral + autocorrelación + seguimiento de beats por programación dinámica → marcadores verdes; **cortar al compás** acorta los clips de la pista principal para que terminen en un beat (cada 1/2/4). **Voz neuronal offline**: MMS-TTS (VITS, transformers.js) en es/en/pt/fr/de.
 **Timeline, proyectos y exportación robusta (v1.4):** **exportación reanudable**: el H.264 de WebCodecs va a un archivo temporal en la caché (`exp-<hash>.h264`) con un punto de control en cada keyframe (cada 2 s, `exp-<hash>.json`); si algo falla se reintenta solo hasta 3 veces desde el último punto con decoder y encoder nuevos, y si se rinde el diálogo ofrece **Reanudar** (también tras reiniciar la app; el hash identifica proyecto + ajustes). El audio se mezcla y se une al final (`-c:v copy`). `e2e/long.cjs` exporta 60 min vigilando memoria. **Presets por plataforma** (TikTok, Reels, Shorts, YouTube; avisa y cambia el formato del proyecto si no coincide), **subtítulos** quemados / SRT aparte / ambos, **exportar un rango** (todo, clips seleccionados o desde–hasta; el audio usa `atrim` del rango). **Selección por caja** (arrastrar en zona vacía; Shift/Ctrl suma; clic busca), **reordenar pistas** arrastrando la cabecera (visuales entre visuales, audio entre audio). **Paquete portable** `.velvix` (magic + JSON + archivos seguidos: medios, proxies, miniaturas, WAV de efectos) exportar/importar desde el inicio o arrastrándolo. **Versiones**: copia al abrir y cada 5 min de edición (30 por proyecto, `projects/backups/<id>`), restaurar desde el inicio. **Recuperación**: `session.json` marca el proyecto abierto; si sigue al arrancar (o el renderer se cae y se recarga) el inicio ofrece recuperarlo. **Kit de marca** (pestaña Marca, `brand.json` + logos copiados a `brand/`): colores, fuentes y estilos de texto que se aplican al texto seleccionado y logos que se agregan como marca de agua.
+**Motor WebGL y color profesional (v1.5):** `engine/gl.js`: un shader WebGL2 gradúa cada clip (y las capas de ajuste) antes de que canvas 2D lo componga (transformación, máscara, fusión, transiciones siguen igual): croma, **suavizar piel** (bilateral solo en tonos de piel YCbCr, conserva bordes), nitidez real (unsharp), exposición/brillo/contraste/saturación/tono con las mismas matrices que los filtros CSS de antes (los 28 presets se ven igual), temperatura/matiz/desvanecer/viñeta/grano, **ruedas lift/gamma/gain** (`filter.liftX/liftY/lift`…, con keyframes), **curvas RGB** (maestra + R/G/B, cúbica monótona horneada en una textura 256×1), **HSL por color** (8 rangos) y **LUT .cube 3D** (textura 3D RGB16F, intensidad con keyframes; se copia a `%APPDATA%/Velvix Studio/luts` y viaja en el paquete `.velvix`). El canvas WebGL es único y nunca se encoge: se dibuja su región w×h como si fuera el clip. Pestaña **Color** del inspector (también en capas de ajuste): **scopes** (histograma RGB y forma de onda de luma del cuadro del preview), LUT, ruedas, curvas, HSL y retoque facial. 4K con vintage+croma+nitidez (`e2e/bench4k.cjs`): preview 64 → 240 fps (tope del monitor), exportación 4K 26.8 → 34.4 fps.
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
 ## Plan por sesiones ⏳
@@ -79,13 +81,13 @@ Base común: `Timeline.jsx`, `store.js`, `ExportDialog.jsx`, `main.cjs`.
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 4 completa siguiendo las reglas de toda sesión.`
 
-### Sesión 5 — Motor WebGL y color profesional
+### Sesión 5 — Motor WebGL y color profesional ✅ (v1.5.0)
 Base común: reemplazar los filtros CSS/canvas de `render.js` por shaders WebGL (mismo resultado en preview y export).
-- [ ] #7 A — **Compositor WebGL** (mejor rendimiento en 4K y con muchos efectos) + **LUTs .cube**.
-- [ ] #18 A — **Color pro**: HSL por color, curvas RGB, ruedas lift/gamma/gain, scopes (histograma / forma de onda).
-- [ ] #27a C — **Retoque facial ligero** (suavizado de piel con filtro bilateral en shader; sin IA).
+- [x] ✅ #7 A — **Compositor WebGL** (mejor rendimiento en 4K y con muchos efectos) + **LUTs .cube**.
+- [x] ✅ #18 A — **Color pro**: HSL por color, curvas RGB, ruedas lift/gamma/gain, scopes (histograma / forma de onda).
+- [x] ✅ #27a C — **Retoque facial ligero** (suavizado de piel con filtro bilateral en shader; sin IA).
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 5 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 5 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits).`
 
 ### Sesión 6 — IA visual y análisis de video
 Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer después de las Sesiones 1 y 5 (usa transcripción y WebGL).
@@ -95,14 +97,14 @@ Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer des
 - [ ] #26 C — **Video largo → clips cortos** (transcripción + energía de audio + escenas).
 - [ ] #27b C — **Mejorar resolución con IA** (upscaling).
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 6 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 6 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits).`
 
 ### Sesión 7 — Contenido creativo
 Base común: catálogos de `model.js`, `drawText` en `render.js`, panel izquierdo.
 - [ ] #8 B — **Plantillas de proyecto**, **stickers animados** (GIF/Lottie), **texto curvo y 3D**, **estilos distintos por palabra**.
 - [ ] #25 B — **Biblioteca de música y efectos de sonido libres (CC0)**, descargable aparte; nunca música con copyright.
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits).`
 
 ### Sesión 8 — Lanzamiento
 Al final, cuando las features estén listas.
@@ -111,7 +113,7 @@ Al final, cuando las features estén listas.
 - [ ] Licencias: cambiar a build LGPL de ffmpeg si se va a vender; pantalla "Acerca de" con licencias de terceros. **Ojo:** las voces MMS-TTS (#9b) son CC-BY-NC 4.0 (no comercial): cambiarlas antes de vender (p. ej. Piper con voces de licencia libre). Revisar también la licencia de los modelos RNNoise (`cb.rnnn`) y UVR.
 - [ ] #1 — **Firma de código** (requiere comprar certificado OV/EV; quita el aviso de SmartScreen). Es un trámite, no código.
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits).`
 
 **Orden recomendado:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. La Sesión 4 puede adelantarse si aparecen fallos de exportación.
 
@@ -129,6 +131,8 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - La Sesión 4 exporta `out-ref/out-retry/out-resume.mp4` (ramp.mp4 con un fallo simulado vía `window.__velvixFail = { at, n }`: reintento automático y Reanudar; se comparan cuadro a cuadro), `out-range.mp4` + `out-range.srt` y `out-burn.mp4` (preset TikTok, rango 1–3 s, subtítulos aparte o quemados); prueba selección por caja y reordenar pistas con el ratón, kit de marca, paquete `.velvix`, versiones desde el inicio y recuperación tras `forcefullyCrashRenderer`.
 - `node e2e/long.cjs` → #17: genera `e2e/gen/long60.mp4` (60 min) y lo exporta a 480p con un fallo a la mitad. Resultado (oct 2026): 108000 cuadros exactos, 60:00 de audio, 320 s (~337 fps), memoria total 0.9–1.1 GB sin crecer. `MIN=5` para una versión corta.
 - `node e2e/verify4.cjs` → verificación de la Sesión 4 en la app real: mata la app con `taskkill` al 45 % de una exportación de 2 min y la reanuda (mismos cuadros y audio que una exportación entera), rango con curva + keyframes + subtítulos quemados contra el video completo, logo de marca en 16:9 y 9:16, deshacer/rehacer de reordenar pistas y de borrar una selección por caja, rotación de versiones y un paquete con rutas con espacios y acentos. Luego `PKG=1 node e2e/verify4.cjs pkg` abre ese paquete en la app empaquetada.
+- `node e2e/verify5.cjs` (lo corre también `full.cjs` al final) → Sesión 5: fórmulas del shader contra las de CSS, croma, LUT (`gen/swap rb.cube`, cambia R↔B), curvas, HSL, ruedas, viñeta/grano, piel (baja el ruido en piel y no en azul), capa de ajuste, keyframes del LUT, la pestaña Color con el ratón (rueda, curva, HSL, piel, LUT por diálogo, deshacer), scopes, exportación `out-color.mp4` comparada con el preview y con el original R↔B, y el LUT dentro del paquete `.velvix`.
+- `node e2e/bench4k.cjs [otraCarpeta]` → fps del preview y tiempo de exportación 4K de `gen/src4k.mp4` con vintage+croma+nitidez; con otra carpeta (p. ej. un `git worktree` de la versión anterior) compara.
 - `node e2e/cap.cjs` → subtítulos automáticos. `node e2e/smoke.cjs` → capturas rápidas.
 - `PKG=1 node e2e/full.cjs` → lo mismo contra la app empaquetada (`npm run dist` antes).
 - Medios de prueba en `e2e/media/`.
@@ -167,6 +171,10 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - La firma que identifica una exportación reanudable no debe incluir campos que cambian al reabrir (`media.missing`, miniaturas, nombre, fechas): con ellos, tras matar la app nunca aparecía Reanudar.
 - Limpiar temporales con `fs.rm` puede fallar con EBUSY si otra ventana los tiene abiertos (Windows): ignorar el error.
 - Borrar un proyecto importado borra también `imported/<id>` (antes sus medios quedaban en disco). Solo se guarda una exportación reanudable a la vez (una nueva borra los `exp-*` anteriores). Restaurar una versión pide confirmación y guarda la actual como versión.
+
+- **WebGL**: `needsGrade` debe iniciar la carga del LUT antes de cualquier `return` temprano (con otro ajuste activo el LUT nunca cargaba en el preview; la exportación sí, porque espera `preloadLuts`).
+- Para benchmarks de canvas no leer con `getImageData` en cada cuadro: Chromium pasa ese canvas a CPU y mide otra cosa. Medir fps reales del preview o la exportación.
+- Comparar preview y exportación con patrones finos (clip1) da diferencias por aliasing del preview reducido: usar degradados suaves.
 
 ## Notas
 - La primera vez que se usan subtítulos se descarga el modelo de voz (75–500 MB). Después funciona sin internet.

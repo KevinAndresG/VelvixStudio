@@ -217,8 +217,8 @@ kbd { font: 11px Consolas, monospace; background: var(--bg4); border: 1px solid 
 .right { width: 330px; flex: none; border-left: 1px solid var(--line); background: var(--bg2); overflow-y: auto; }
 .insp-title { margin: 0; padding: 14px 14px 8px; font-size: 14px; display: flex; flex-direction: column; gap: 2px; word-break: break-word; }
 .insp-title small { color: var(--tx3); font-weight: 400; font-size: 11px; font-family: Consolas, monospace; }
-.tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-.tabs button { background: none; border: 0; padding: 8px 9px; color: var(--tx3); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 12.5px; }
+.tabs { display: flex; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs button { background: none; border: 0; padding: 8px 7px; color: var(--tx3); border-bottom: 2px solid transparent; white-space: nowrap; font-size: 12.5px; }
 .tabs button:hover { color: var(--tx); }
 .tabs button.active { color: var(--tx); border-bottom-color: var(--acc); }
 .insp-body { padding-bottom: 30px; }
@@ -388,3 +388,22 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .brand-logos button { aspect-ratio: 1; padding: 6px; background: var(--bg3); border: 1px solid var(--line2); border-radius: 8px; }
 .brand-logos img { width: 100%; height: 100%; object-fit: contain; }
 .home-actions { display: flex; align-items: center; gap: 10px; }
+
+/* color pro */
+.scope { display: block; width: 100%; aspect-ratio: 256 / 100; margin-top: 6px; border: 1px solid var(--line); border-radius: 8px; background: #0b0b0f; image-rendering: pixelated; }
+.lut-name { font-size: 11.5px; color: var(--tx2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.wheels { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 6px; }
+.wheel-box { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 11px; color: var(--tx2); }
+.wheel { position: relative; width: 100%; max-width: 78px; aspect-ratio: 1; border-radius: 50%; cursor: crosshair; touch-action: none; border: 1px solid var(--line);
+  background: radial-gradient(circle, #7a7a80 0%, rgba(122,122,128,.55) 35%, rgba(122,122,128,0) 72%),
+    conic-gradient(from 30deg, #ff0, #f00 60deg, #f0f 120deg, #00f 180deg, #0ff 240deg, #0f0 300deg, #ff0 360deg); }
+.wheel i { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 50%; background: #fff; border: 2px solid #111; pointer-events: none; }
+.rgb-curve { width: 100%; aspect-ratio: 1; margin-top: 6px; background: var(--bg3); border: 1px solid var(--line); border-radius: 8px; touch-action: none; cursor: crosshair; }
+.rgb-curve line { stroke: rgba(255,255,255,.08); stroke-width: 1; }
+.rgb-curve line.diag { stroke: rgba(255,255,255,.15); stroke-dasharray: 3 3; }
+.rgb-curve polyline { fill: none; stroke-width: 2; }
+.rgb-curve circle { stroke: #111; stroke-width: 1.5; cursor: grab; }
+.hsl-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.hsl-chips button { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; padding: 0; }
+.hsl-chips button.active { border-color: #fff; box-shadow: 0 0 0 2px var(--acc); }
+.hsl-chips button.used::after { content: ''; display: block; width: 6px; height: 6px; margin: 6px auto 0; border-radius: 50%; background: #fff; }

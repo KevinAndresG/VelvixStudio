@@ -27,6 +27,9 @@ export const DEFAULT_TRANSFORM = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1
 export const DEFAULT_FILTER = {
   preset: 'none', intensity: 100, exposure: 0, brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0,
   hue: 0, fade: 0, vignette: 0, grain: 0, blur: 0, sharpen: 0,
+  // Color pro (gl.js): skin smoothing, lift/gamma/gain wheels (puck X/Y + level), RGB curves, HSL per color, LUT.
+  skin: 0, liftX: 0, liftY: 0, lift: 0, gammaX: 0, gammaY: 0, gamma: 0, gainX: 0, gainY: 0, gain: 0,
+  curves: null, hsl: null, lut: null, lutName: '', lutMix: 100,
 };
 export const DEFAULT_ANIM = { in: { type: 'none', dur: 0.5 }, out: { type: 'none', dur: 0.5 }, loop: { type: 'none', speed: 1 } };
 export const DEFAULT_TEXT = {
@@ -226,13 +229,15 @@ export const FILTER_PRESETS = {
   invert: { name: 'Invertir', invert: 100 },
 };
 
-export const FILTER_KEYS = ['exposure', 'brightness', 'contrast', 'saturation', 'temperature', 'tint', 'hue', 'fade', 'vignette', 'grain', 'blur', 'sharpen', 'sepia', 'invert'];
+export const FILTER_KEYS = ['exposure', 'brightness', 'contrast', 'saturation', 'temperature', 'tint', 'hue', 'fade', 'vignette', 'grain', 'blur', 'sharpen', 'sepia', 'invert',
+  'skin', 'liftX', 'liftY', 'lift', 'gammaX', 'gammaY', 'gamma', 'gainX', 'gainY', 'gain'];
 
 // Combines preset (scaled by intensity) and manual adjustments.
 export function effectiveFilter(f) {
   if (!f) return null;
   const p = FILTER_PRESETS[f.preset] || {}, k = (f.intensity ?? 100) / 100, out = {};
   for (const key of FILTER_KEYS) out[key] = (p[key] || 0) * k + (f[key] || 0);
+  Object.assign(out, { curves: f.curves, hsl: f.hsl, lut: f.lut, lutMix: f.lutMix ?? 100 });
   return out;
 }
 
