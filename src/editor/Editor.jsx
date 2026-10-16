@@ -82,6 +82,7 @@ export default function Editor() {
       }
     } catch { /* thumbnail is optional */ }
     await flushSave();
+    window.api.sessionSet(null);
     setState({ view: 'home', project: null, past: [], future: [], selection: [] });
   };
 

@@ -16,7 +16,13 @@ const DATA = app.getPath('userData');
 const PROJECTS = path.join(DATA, 'projects');
 const CACHE = path.join(DATA, 'cache');
 const MODELS = path.join(DATA, 'models');
-for (const d of [PROJECTS, CACHE, MODELS]) fs.mkdirSync(d, { recursive: true });
+const BACKUPS = path.join(PROJECTS, 'backups');
+const BRAND = path.join(DATA, 'brand');
+for (const d of [PROJECTS, CACHE, MODELS, BACKUPS, BRAND]) fs.mkdirSync(d, { recursive: true });
+// Open project of the running session: still there on start = the app didn't close cleanly.
+const SESSION = path.join(DATA, 'session.json');
+const readSession = () => { try { return JSON.parse(fs.readFileSync(SESSION, 'utf8')); } catch { return null; } };
+let crashed = readSession();
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -88,7 +94,12 @@ function createWindow() {
   // Block navigation away from the app and open external links in the browser.
   win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith('app://') && !url.startsWith('http://localhost:5173')) e.preventDefault(); });
   win.webContents.setWindowOpenHandler(({ url }) => { if (/^https?:/.test(url)) shell.openExternal(url); return { action: 'deny' }; });
+  // Renderer crash (GPU/out of memory): reload and offer the autosaved project.
+  win.webContents.on('render-process-gone', (_e, d) => { if (d.reason !== 'clean-exit') { crashed = readSession(); win.reload(); } });
 }
+ipcMain.handle('session:crashed', () => { const c = crashed; crashed = null; return c; });
+ipcMain.handle('session:set', (_e, id) => (id ? fsp.writeFile(SESSION, JSON.stringify({ projectId: id, at: Date.now() })) : fsp.rm(SESSION, { force: true })));
+app.on('before-quit', () => { try { fs.rmSync(SESSION, { force: true }); } catch { /* ignore */ } });
 
 app.whenReady().then(async () => {
   await new Promise((r) => mediaServer.listen(0, '127.0.0.1', r));
@@ -161,9 +172,106 @@ ipcMain.handle('projects:save', async (_e, project) => {
   const f = projFile(project.id);
   await fsp.writeFile(f + '.tmp', JSON.stringify(project));
   await fsp.rename(f + '.tmp', f);
+  // Version history: at most one copy every 5 min while editing.
+  if (Date.now() - (lastBackup.get(project.id) || 0) > 5 * 60e3) await snapshot(project.id);
   return true;
 });
-ipcMain.handle('projects:delete', (_e, id) => fsp.rm(projFile(id), { force: true }));
+ipcMain.handle('projects:delete', async (_e, id) => { await fsp.rm(projFile(id), { force: true }); await fsp.rm(backupDir(id), { recursive: true, force: true }); });
+
+// ---------- version history ----------
+const lastBackup = new Map();
+const backupDir = (id) => path.join(BACKUPS, id.replace(/[^\w-]/g, ''));
+async function snapshot(id) {
+  if (!(await exists(projFile(id)))) return null;
+  const dir = backupDir(id), now = Date.now();
+  await fsp.mkdir(dir, { recursive: true });
+  await fsp.copyFile(projFile(id), path.join(dir, `${now}.json`));
+  lastBackup.set(id, now);
+  const old = (await fsp.readdir(dir)).filter((f) => f.endsWith('.json')).sort((a, b) => parseInt(b) - parseInt(a)).slice(30);
+  for (const f of old) await fsp.rm(path.join(dir, f), { force: true });
+  return now;
+}
+ipcMain.handle('projects:snapshot', (_e, id) => snapshot(id));
+ipcMain.handle('projects:versions', async (_e, id) => {
+  const dir = backupDir(id), out = [];
+  for (const f of (await fsp.readdir(dir).catch(() => [])).filter((x) => x.endsWith('.json'))) {
+    try {
+      const p = JSON.parse(await fsp.readFile(path.join(dir, f), 'utf8'));
+      out.push({ at: parseInt(f), clips: p.clips.length, duration: Math.max(0, ...p.clips.map((c) => c.start + c.duration)), name: p.name });
+    } catch { /* skip corrupt */ }
+  }
+  return out.sort((a, b) => b.at - a.at);
+});
+// Restores a version as the current project (the current state is kept as a version first).
+ipcMain.handle('projects:restore', async (_e, id, at) => {
+  const src = path.join(backupDir(id), `${Math.floor(at)}.json`);
+  const p = JSON.parse(await fsp.readFile(src, 'utf8'));
+  await snapshot(id);
+  p.updatedAt = Date.now();
+  await fsp.writeFile(projFile(id) + '.tmp', JSON.stringify(p));
+  await fsp.rename(projFile(id) + '.tmp', projFile(id));
+  return p;
+});
+
+// ---------- portable package (.velvix): magic, header length, JSON header, then the files back to back ----------
+const MAGIC = Buffer.from('VELVIXP1');
+const pathFields = (p) => [...p.media.flatMap((m) => ['path', 'proxy', 'reversed', 'thumb', 'strip'].map((k) => [m, k])), ...p.clips.map((c) => [c, 'fxPath']), [p, 'thumb']];
+ipcMain.handle('package:export', async (_e, id, out) => {
+  const p = JSON.parse(await fsp.readFile(projFile(id), 'utf8'));
+  const files = [], index = new Map();
+  for (const [o, k] of pathFields(p)) {
+    const f = o[k];
+    if (!f || index.has(f)) continue;
+    const st = await fsp.stat(f).catch(() => null);
+    if (!st || !st.isFile()) continue;
+    index.set(f, files.length);
+    files.push({ src: f, name: path.basename(f), size: st.size });
+  }
+  const header = Buffer.from(JSON.stringify({ project: p, files: files.map(({ src, name, size }) => ({ src, name, size })) }));
+  const len = Buffer.alloc(8); len.writeBigUInt64LE(BigInt(header.length));
+  const fh = await fsp.open(out + '.part', 'w');
+  try {
+    await fh.write(Buffer.concat([MAGIC, len, header]));
+    for (const f of files) for await (const chunk of fs.createReadStream(f.src)) await fh.write(chunk);
+  } finally { await fh.close(); }
+  await fsp.rename(out + '.part', out);
+  return { files: files.length, bytes: files.reduce((a, f) => a + f.size, 0) };
+});
+ipcMain.handle('package:import', async (_e, file) => {
+  const fh = await fsp.open(file, 'r');
+  let header, pos;
+  try {
+    const head = Buffer.alloc(16);
+    await fh.read(head, 0, 16, 0);
+    if (!head.subarray(0, 8).equals(MAGIC)) throw new Error('No es un paquete de Velvix Studio');
+    const n = Number(head.readBigUInt64LE(8)), hb = Buffer.alloc(n);
+    await fh.read(hb, 0, n, 16);
+    header = JSON.parse(hb.toString('utf8')); pos = 16 + n;
+  } finally { await fh.close(); }
+  const p = header.project, id = crypto.randomBytes(6).toString('hex'), dir = path.join(DATA, 'imported', id), map = new Map();
+  await fsp.mkdir(dir, { recursive: true });
+  for (const [i, f] of header.files.entries()) {
+    const dst = path.join(dir, `${i}-${f.name.replace(/[<>:"/\\|?*]+/g, '_')}`);
+    if (f.size) await new Promise((res, rej) => fs.createReadStream(file, { start: pos, end: pos + f.size - 1 }).on('error', rej).pipe(fs.createWriteStream(dst)).on('finish', res).on('error', rej));
+    else await fsp.writeFile(dst, '');
+    pos += f.size; map.set(f.src, dst);
+  }
+  for (const [o, k] of pathFields(p)) if (o[k]) o[k] = map.get(o[k]) || o[k];
+  Object.assign(p, { id, createdAt: Date.now(), updatedAt: Date.now() });
+  await fsp.writeFile(projFile(id), JSON.stringify(p));
+  return id;
+});
+
+// ---------- brand kit (shared by every project) ----------
+const BRAND_FILE = path.join(DATA, 'brand.json');
+ipcMain.handle('brand:get', async () => { try { return JSON.parse(await fsp.readFile(BRAND_FILE, 'utf8')); } catch { return { colors: [], fonts: [], logos: [], styles: [] }; } });
+ipcMain.handle('brand:set', (_e, b) => fsp.writeFile(BRAND_FILE, JSON.stringify(b)));
+// Logos are copied in so they survive the original being moved or deleted.
+ipcMain.handle('brand:logo', async (_e, file) => {
+  const out = path.join(BRAND, `${hash(file + Date.now())}${path.extname(file).toLowerCase()}`);
+  await fsp.copyFile(file, out);
+  return out;
+});
 ipcMain.handle('projects:thumb', async (_e, id, buf) => {
   const p = path.join(CACHE, `proj-${id}.jpg`);
   await fsp.writeFile(p, Buffer.from(buf));
@@ -382,7 +490,8 @@ function volumeFilter(v) {
 }
 // segs: [{ path, in, srcDur, start, duration, speed, volume, fadeIn, fadeOut, pieces? }]
 // pieces (speed curves): [{ in, srcDur, speed, duration }] contiguous constant-speed parts of the source.
-function audioGraph(segs, total, firstInput) {
+// from/total: timeline range to render (export of a range); the output starts at 0.
+function audioGraph(segs, total, firstInput, from = 0) {
   const inputs = [], parts = [];
   const fmt = 'aformat=sample_rates=48000:channel_layouts=stereo';
   segs.forEach((s, i) => {
@@ -416,8 +525,8 @@ function audioGraph(segs, total, firstInput) {
     f.push(`adelay=${Math.round(s.start * 1000)}:all=1`);
     parts.push(`${src}${f.join(',')}[a${i}]`);
   });
-  if (!segs.length) return { inputs: ['-f', 'lavfi', '-t', String(total), '-i', 'anullsrc=r=48000:cl=stereo'], filter: `[${firstInput}:a]anull[aout]` };
-  const end = `apad,atrim=0:${total.toFixed(4)}`;
+  if (!segs.length) return { inputs: ['-f', 'lavfi', '-t', String(total - from), '-i', 'anullsrc=r=48000:cl=stereo'], filter: `[${firstInput}:a]anull[aout]` };
+  const end = `apad,atrim=${from.toFixed(4)}:${total.toFixed(4)},asetpts=PTS-STARTPTS`;
   const mixOf = (ids, out) => (ids.length === 1 ? `[a${ids[0]}]${end}[${out}]` : ids.map((i) => `[a${i}]`).join('') + `amix=inputs=${ids.length}:normalize=0:duration=longest,${end}[${out}]`);
   const ducked = segs.map((s, i) => (s.duck > 0 ? i : -1)).filter((i) => i >= 0), voice = segs.map((s, i) => (s.duck > 0 ? -1 : i)).filter((i) => i >= 0);
   if (!ducked.length || !voice.length) return { inputs, filter: parts.join(';') + ';' + mixOf(segs.map((_, i) => i), 'aout') };
@@ -452,13 +561,30 @@ async function hwEncoder() {
 ipcMain.handle('export:hw', () => hwEncoder());
 
 let job = null;
+// H.264 from WebCodecs goes to a temp file (not a live ffmpeg pipe) with checkpoints at keyframes, so a long
+// export that fails can resume from the last checkpoint, even after a restart. Audio is muxed in at the end.
+const expFiles = (key) => ({ h264: path.join(CACHE, `exp-${key}.h264`), state: path.join(CACHE, `exp-${key}.json`) });
+ipcMain.handle('export:resumable', async (_e, sig) => {
+  const key = hash(sig), f = expFiles(key);
+  try {
+    const st = JSON.parse(await fsp.readFile(f.state, 'utf8'));
+    return (await fsp.stat(f.h264)).size >= st.off && st.f > 0 ? { ...st, key } : null;
+  } catch { return null; }
+});
 ipcMain.handle('export:start', async (_e, o) => {
-  // o: { out, format, width, height, fps, quality: 'low'|'med'|'high', hw, segs, total, audioOnly }
-  const g = audioGraph(o.segs, o.total, o.audioOnly ? 0 : 1);
+  // o: { out, format, width, height, fps, quality: 'low'|'med'|'high', hw, segs, total, from, audioOnly, videoInput, sig, resume }
+  o.from = o.from || 0;
+  if (o.videoInput === 'h264') {
+    const key = hash(o.sig), f = expFiles(key);
+    if (o.resume) await fsp.truncate(f.h264, o.resume.off);
+    else await fsp.rm(f.state, { force: true });
+    job = { file: true, o, key, f, fd: fs.openSync(f.h264, o.resume ? 'r+' : 'w'), pos: o.resume ? o.resume.off : 0 };
+    return { ok: true, key };
+  }
+  const g = audioGraph(o.segs, o.total, o.audioOnly ? 0 : 1, o.from);
   const crf = { low: 28, med: 22, high: 17 }[o.quality] || 22;
   const args = ['-y'];
-  if (o.videoInput === 'h264') args.push('-fflags', '+genpts', '-f', 'h264', '-framerate', String(o.fps), '-i', 'pipe:0');
-  else if (!o.audioOnly) args.push('-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${o.width}x${o.height}`, '-framerate', String(o.fps), '-i', 'pipe:0');
+  if (!o.audioOnly) args.push('-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${o.width}x${o.height}`, '-framerate', String(o.fps), '-i', 'pipe:0');
   args.push(...g.inputs);
   let filter = g.filter;
   if (o.format === 'gif') {
@@ -472,9 +598,6 @@ ipcMain.handle('export:start', async (_e, o) => {
     args.push('-filter_complex', filter, '-map', '0:v', '-map', '[aout]');
     if (o.format === 'webm') {
       args.push('-c:v', 'libvpx-vp9', '-crf', String(crf + 8), '-b:v', '0', '-row-mt', '1', '-deadline', 'good', '-cpu-used', '4', '-c:a', 'libopus', '-b:a', '160k');
-    } else if (o.videoInput === 'h264') {
-      // Already encoded in the renderer (WebCodecs): just mux.
-      args.push('-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
     } else {
       const enc = o.hw ? await hwEncoder() : '';
       if (enc === 'h264_nvenc') args.push('-c:v', enc, '-preset', 'p5', '-rc', 'vbr', '-cq', String(crf), '-b:v', '0');
@@ -483,14 +606,14 @@ ipcMain.handle('export:start', async (_e, o) => {
       else args.push('-c:v', 'libx264', '-preset', 'medium', '-crf', String(crf));
       args.push('-pix_fmt', 'yuv420p', '-r', String(o.fps), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart');
     }
-    if (o.videoInput !== 'h264') args.push('-shortest'); // audio is already trimmed to the exact length
+    args.push('-shortest'); // audio is already trimmed to the exact length
   }
   args.push(o.out);
   const proc = spawn(FFMPEG, args, { windowsHide: true });
   let log = '';
   proc.stderr.on('data', (d) => {
     log = (log + d).slice(-8000);
-    if (o.audioOnly) { const t = timeOf(String(d)); if (t != null) send('export:audioProgress', Math.min(1, t / o.total)); }
+    if (o.audioOnly) { const t = timeOf(String(d)); if (t != null) send('export:audioProgress', Math.min(1, t / (o.total - o.from))); }
   });
   proc.stdin.on('error', () => {});
   const done = new Promise((resolve) => proc.on('close', (code) => resolve({ ok: code === 0, error: code === 0 ? null : log.split('\n').slice(-8).join('\n') })));
@@ -498,10 +621,19 @@ ipcMain.handle('export:start', async (_e, o) => {
   if (o.audioOnly) { const r = await done; job = null; return r; }
   return { ok: true };
 });
+// ckpt { f, off }: frame f starts a keyframe at byte off of the stream; saved once the bytes before it are on disk.
 // Resolves false if ffmpeg died, so the renderer stops instead of waiting on 'drain' forever.
-ipcMain.handle('export:frame', (_e, buf) => new Promise((resolve) => {
+ipcMain.handle('export:frame', (_e, buf, ckpt) => new Promise((resolve) => {
   if (!job || job.closed) return resolve(false);
   const j = job;
+  if (j.file) {
+    try {
+      const b = Buffer.from(buf);
+      fs.writeSync(j.fd, b, 0, b.length, j.pos); j.pos += b.length;
+      if (ckpt && ckpt.off <= j.pos) fs.writeFileSync(j.f.state, JSON.stringify({ ...ckpt, out: j.o.out, at: Date.now() }));
+      return resolve(true);
+    } catch { return resolve(false); }
+  }
   if (j.proc.stdin.write(Buffer.from(buf))) return resolve(true);
   const onDrain = () => { j.proc.removeListener('close', onClose); resolve(true); };
   const onClose = () => { j.proc.stdin.removeListener('drain', onDrain); resolve(false); };
@@ -510,10 +642,31 @@ ipcMain.handle('export:frame', (_e, buf) => new Promise((resolve) => {
 }));
 ipcMain.handle('export:finish', async () => {
   if (!job) return { ok: false, error: 'no job' };
+  if (job.file) {
+    const { o, f, fd } = job;
+    fs.closeSync(fd); job = null;
+    // Mux: copy the H.264 stream, render the audio mix.
+    const g = audioGraph(o.segs, o.total, 1, o.from);
+    try {
+      await run(FFMPEG, ['-y', '-fflags', '+genpts', '-f', 'h264', '-framerate', String(o.fps), '-i', f.h264, ...g.inputs, '-filter_complex', g.filter,
+        '-map', '0:v', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', o.out], {
+        onStderr: (l) => { const t = timeOf(l); if (t != null) send('export:audioProgress', Math.min(1, t / (o.total - o.from))); },
+      });
+    } catch (e) { return { ok: false, error: e.message }; }
+    await fsp.rm(f.h264, { force: true }); await fsp.rm(f.state, { force: true });
+    return { ok: true };
+  }
   job.proc.stdin.end();
   const r = await job.done; job = null; return r;
 });
-ipcMain.handle('export:cancel', async (_e, out) => {
+// keep: a failed export keeps its temp stream and checkpoint so it can resume; a user cancel removes them.
+ipcMain.handle('export:cancel', async (_e, out, keep) => {
+  if (job && job.file) {
+    fs.closeSync(job.fd);
+    if (!keep) { await fsp.rm(job.f.h264, { force: true }); await fsp.rm(job.f.state, { force: true }); }
+    job = null; return;
+  }
   if (job) { job.proc.kill('SIGKILL'); await job.done; job = null; }
   if (out) fsp.rm(out, { force: true }).catch(() => {});
 });
+

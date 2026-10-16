@@ -448,6 +448,201 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   check('#9b voz neuronal offline (MMS-TTS)', tts && tts.type === 'audio' && tts.duration > 1 && ttsDb > -35, tts ? `${tts.duration.toFixed(2)} s, ${ttsDb} dB` : 'sin clip');
   await page.screenshot({ path: S + '/09-audio-ai.png' });
 
+
+  // ---------- Sesión 4: timeline, proyectos y exportación robusta ----------
+  const mp = (f) => path.join(S, 'media', f);
+  const outFile = (n) => path.win32.normalize(path.join(S, n));
+  const setSave = (o) => app.evaluate(({ dialog }, o) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: o }); }, o);
+  const waitExport = async () => {
+    let t = '';
+    for (let i = 0; i < 90; i++) { await page.waitForTimeout(1000); t = await page.evaluate(() => document.querySelector('.export')?.innerText || ''); if (/completa|fall/.test(t)) break; }
+    return t.replace(/\s+/g, ' ');
+  };
+  const closeExport = () => page.click('.export .btn:has-text("Listo"), .export .btn:has-text("Volver")').catch(() => {});
+  const streamsOf = (f) => Object.fromEntries(probe(f).map((l) => l.split(',')).map(([k, d]) => [k, +d]));
+  // Per-frame mean luma of the left and right quarters (ramp.mp4 encodes the frame number there).
+  const quarters = (f) => {
+    const raw = cp3.execFileSync(FF3, ['-v', 'error', '-i', f, '-vf', 'scale=4:1:flags=area', '-pix_fmt', 'gray', '-f', 'rawvideo', '-']);
+    const out = []; for (let i = 0; i + 4 <= raw.length; i += 4) out.push([raw[i], raw[i + 3]]); return out;
+  };
+  const decodeErrors = (f) => cp3.spawnSync(FF3, ['-v', 'error', '-i', f, '-f', 'null', '-']).stderr.toString().trim();
+
+  // #17 export that fails mid-way: automatic retry from the last checkpoint, and resume after giving up.
+  await page.evaluate(async (f) => {
+    const { actions: A, store } = window.__velvix;
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); d.background.type = 'black'; });
+    const [ramp] = await A.importPaths([f]);
+    A.addToTimeline(ramp);
+    store.setState({ selection: [] });
+  }, mp('ramp.mp4'));
+  await setSave(outFile('out-ref.mp4'));
+  await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export'); await page.click('.export .btn.primary');
+  const tRef = await waitExport(); await closeExport();
+  await page.evaluate(() => { window.__velvixFail = { at: 140, n: 1 }; });
+  await setSave(outFile('out-retry.mp4'));
+  await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export'); await page.click('.export .btn.primary');
+  const tRetry = await waitExport(); await closeExport();
+  const ref = quarters(outFile('out-ref.mp4')), retry = /completa/.test(tRetry) ? quarters(outFile('out-retry.mp4')) : [];
+  const same = (a, b) => a.length === b.length && a.every(([l, r], i) => Math.abs(l - b[i][0]) < 6 && Math.abs(r - b[i][1]) < 6);
+  check('#17 fallo a mitad de exportación: reintento automático sin cuadros repetidos ni perdidos', /completa/.test(tRef) && same(ref, retry) && ref.length === 300 && !decodeErrors(outFile('out-retry.mp4')), `${ref.length} vs ${retry.length} cuadros ${tRetry.slice(0, 60)}`);
+  // Fails every retry → error with "Reanudar"; the checkpoint is on disk, so a new dialog offers to resume.
+  await page.evaluate(() => { window.__velvixFail = { at: 200, n: 99 }; });
+  await setSave(outFile('out-resume.mp4'));
+  await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export'); await page.click('.export .btn.primary');
+  const tFail = await waitExport();
+  const failUi = await page.evaluate(() => ({ resume: !!document.querySelector('.export .resume'), text: document.querySelector('.export').innerText }));
+  await page.evaluate(() => { window.__velvixFail = null; });
+  await page.click('.export .btn:has-text("Volver")'); await page.click('.export .btn:has-text("Cancelar")');
+  await setSave(outFile('nunca.mp4')); // resuming must reuse the original output path
+  await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export');
+  const resumeBtn = await page.waitForSelector('.export .btn.resume', { timeout: 5000 }).then((h) => h.innerText()).catch(() => '');
+  if (resumeBtn) await page.click('.export .btn.resume');
+  const tResume = resumeBtn ? await waitExport() : '';
+  await closeExport();
+  const resumed = /completa/.test(tResume) ? quarters(outFile('out-resume.mp4')) : [];
+  const pct = +(/(\d+)%/.exec(resumeBtn) || [0, 0])[1];
+  check('#17 sin reintentos: error con opción de reanudar', /fall/.test(tFail) && failUi.resume && /reanudar/i.test(failUi.text), tFail.slice(0, 80));
+  check('#17 reanudar exportación desde el último punto guardado', pct >= 30 && pct < 70 && same(ref, resumed) && !decodeErrors(outFile('out-resume.mp4')), `${resumeBtn.trim()} → ${resumed.length} cuadros`);
+
+  // #10 box selection and track reordering in the timeline.
+  const tl = await page.evaluate(async (f) => {
+    const { actions: A, store } = window.__velvix;
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); });
+    const [gray] = await A.importPaths([f]);
+    A.addToTimeline(gray); A.addToTimeline(gray);
+    store.setState({ time: 0 }); A.addText({}, 'uno'); A.addText({}, 'dos');
+    store.setState({ zoom: 40, selection: [], time: 0 });
+    await new Promise((r) => setTimeout(r, 300));
+    document.querySelector('.tl-scroll').scrollLeft = 0;
+    const p = store.getState().project;
+    return { tracks: p.tracks.map((t) => t.id), n: p.clips.length };
+  }, mp('gray.png'));
+  const rows = await page.$$eval('.tracks .track', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.top, r.height]; }));
+  const [L, , ] = rows[0], yMain = rows[2][1] + rows[2][2] / 2, yText = rows[1][1] + rows[1][2] / 2;
+  await page.mouse.move(L + 460, yMain); await page.mouse.down(); await page.mouse.move(L + 100, yText, { steps: 8 });
+  const boxShown = await page.$('.box-select').then((h) => !!h);
+  await page.mouse.up();
+  const boxSel = await page.evaluate(() => window.__velvix.store.getState().selection.length);
+  await page.mouse.click(L + 600, yMain);
+  const afterClick = await page.evaluate(() => ({ sel: window.__velvix.store.getState().selection.length, time: window.__velvix.store.getState().time }));
+  check('#10 selección por caja en la línea de tiempo', boxShown && boxSel === 3 && afterClick.sel === 0 && Math.abs(afterClick.time - 10) < 0.05, `caja ${boxSel} clips, clic → ${JSON.stringify(afterClick)}`);
+  const heads = await page.$$eval('.track-head', (els) => els.map((e) => { const r = e.getBoundingClientRect(); return [r.left + 30, r.top, r.height]; }));
+  await page.mouse.move(heads[0][0], heads[0][1] + heads[0][2] / 2); await page.mouse.down();
+  await page.mouse.move(heads[0][0], heads[1][1] + heads[1][2] - 3, { steps: 8 }); await page.mouse.up();
+  const reordered = await page.evaluate(() => window.__velvix.store.getState().project.tracks.map((t) => t.id));
+  check('#10 reordenar pistas arrastrando la cabecera', reordered.join() === [tl.tracks[1], tl.tracks[0], tl.tracks[2]].join(), reordered.length + ' pistas');
+
+  // #23 brand kit: colors, fonts, logos and text styles saved for every project.
+  await app.evaluate(({ dialog }, f) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [f] }); }, mp('gray.png'));
+  await page.click('.left-tabs button[title="Marca"]');
+  await page.waitForSelector('.brand-kit');
+  const txt = await page.evaluate(() => { const p = window.__velvix.store.getState().project; const t = p.clips.find((c) => c.type === 'text'); window.__velvix.store.setState({ selection: [t.id] }); window.__velvix.store.update((d) => { const c = d.clips.find((x) => x.id === t.id); c.text.size = 140; c.text.font = 'Georgia'; }); return t.id; });
+  await page.fill('.brand-colors input[type=color]', '#ff0055');
+  await page.click('.brand-colors .add-color');
+  await page.click('.brand-colors .sw[title^="#ff0055"]');
+  await page.click('.save-font'); await page.click('.save-style');
+  await page.evaluate(() => window.__velvix.store.setState({ time: 6, selection: [] }));
+  await page.click('.brand-style >> nth=-1');
+  await page.click('.add-logo');
+  await page.waitForSelector('.brand-logos img');
+  await page.click('.brand-logos button:has(img) >> nth=-1');
+  await page.waitForTimeout(500);
+  const brand = await page.evaluate(async (id) => {
+    const p = window.__velvix.store.getState().project, b = await window.api.brandGet(), last = p.clips[p.clips.length - 1];
+    const styled = p.clips.filter((c) => c.type === 'text' && c.id !== id && c.text.size === 140 && c.text.color === '#ff0055');
+    return { color: p.clips.find((c) => c.id === id).text.color, b, styled: styled.length, logo: last.type === 'image' ? last.transform.scale : null, logoPath: p.media.find((m) => m.id === last.mediaId)?.path };
+  }, txt);
+  check('#23 kit de marca: color aplicado al texto y guardado', brand.color === '#ff0055' && brand.b.colors.includes('#ff0055'), brand.color);
+  check('#23 kit de marca: fuente y estilo de texto guardados y reutilizados', brand.b.fonts.includes('Georgia') && brand.b.styles.length >= 1 && brand.styled === 1, `${brand.b.fonts.join(',')} · ${brand.b.styles.length} estilos`);
+  check('#23 kit de marca: logo copiado y agregado como marca de agua', brand.logo === 0.18 && /brand/.test(brand.logoPath) && brand.b.logos.some((l) => l.path === brand.logoPath), brand.logoPath);
+
+  // #22 platform preset, export of a range only, captions as a separate SRT (not burned in).
+  await page.evaluate(async (files) => {
+    const { actions: A, store } = window.__velvix;
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); });
+    const [gray, voz] = await A.importPaths(files);
+    A.addToTimeline(gray); store.update((d) => { d.clips[0].duration = 6; });
+    A.addToTimeline(voz, { at: 0 });
+    for (const [s, e, w] of [[0.5, 1.5, 'uno'], [1.5, 2.5, 'dos'], [3.5, 4, 'tres']]) {
+      store.setState({ time: s }); A.addText({ size: 300, color: '#ffffff' }, w);
+      store.update((d) => { const c = d.clips[d.clips.length - 1]; c.caption = true; c.duration = e - s; });
+    }
+    store.setState({ selection: [], time: 0 });
+  }, [mp('gray.png'), mp('voz.wav')]);
+  const exportRange = async (name, subs) => {
+    await setSave(outFile(name));
+    await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export');
+    const sel = (label) => `.export label:has(> span:text-is("${label}")) select`;
+    await page.selectOption(sel('Plataforma'), 'tiktok');
+    const warn = await page.$('.hint.warn').then((h) => !!h);
+    if (warn) await page.click('.hint.warn button');
+    await page.selectOption(sel('Subtítulos'), subs);
+    await page.selectOption(sel('Rango'), 'custom');
+    await page.fill('.range label:has-text("Desde") input', '1');
+    await page.fill('.range label:has-text("Hasta") input', '3');
+    const info = await page.evaluate(() => document.querySelector('.export .info').innerText.replace(/\s+/g, ' '));
+    await page.click('.export .btn.primary');
+    const t = await waitExport(); await closeExport();
+    return { warn, info, ok: /completa/.test(t), t };
+  };
+  const e1 = await exportRange('out-range.mp4', 'srt');
+  const e2 = await exportRange('out-burn.mp4', 'burn');
+  const fs4 = require('fs');
+  const srt = fs4.existsSync(outFile('out-range.srt')) ? fs4.readFileSync(outFile('out-range.srt'), 'utf8') : '';
+  const ymax = (f) => +(/YMAX=(\d+)/.exec(cp3.spawnSync(FF3, ['-v', 'error', '-ss', '1.0', '-i', f, '-frames:v', '1', '-vf', 'signalstats,metadata=print:file=-', '-f', 'null', '-']).stdout.toString()) || [0, -1])[1];
+  const st = e1.ok ? streamsOf(outFile('out-range.mp4')) : {};
+  const wh = e1.ok ? cp3.execFileSync(require(APP + '/node_modules/ffprobe-static').path, ['-v', 'error', '-select_streams', 'v', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', outFile('out-range.mp4')]).toString().trim() : '';
+  check('#22 preset TikTok: 1080×1920 (cambia el formato del proyecto a 9:16)', e1.warn && wh === '1080,1920' && /1080×1920/.test(e1.info), `${wh} · ${e1.info}`);
+  check('#22 exportar solo un rango (video y audio de 2 s)', Math.abs(st.video - 2) < 0.04 && Math.abs(st.audio - 2) < 0.06, JSON.stringify(st));
+  const ac = e1.ok ? corr(pcm(outFile('out-range.mp4'), 0, 2), pcm(mp('voz.wav'), 1, 2)) : 0;
+  check('#22 el audio del rango es el del tramo elegido', ac > 0.8, ac.toFixed(3));
+  check('#22 subtítulos en SRT aparte, con tiempos del rango', /^1\r?\n00:00:00,000 --> 00:00:00,500\r?\nuno/.test(srt) && /00:00:00,500 --> 00:00:01,500\r?\ndos/.test(srt) && !/tres/.test(srt), JSON.stringify(srt));
+  const [y1, y2] = [e1.ok ? ymax(outFile('out-range.mp4')) : -1, e2.ok ? ymax(outFile('out-burn.mp4')) : -1];
+  check('#22 subtítulos quemados o no según la opción', y1 >= 0 && y1 < 200 && y2 > 220, `SRT aparte YMAX ${y1}, quemados YMAX ${y2}`);
+
+  // #10 portable package (.velvix with its media) and import on "another computer".
+  const pk = await page.evaluate(async (out) => {
+    const { store } = window.__velvix; await store.flushSave();
+    const p = store.getState().project;
+    const r = await window.api.exportPackage(p.id, out);
+    const id = await window.api.importPackage(out), q = await window.api.loadProject(id);
+    const exists = await Promise.all(q.media.map((m) => window.api.fileExists(m.path)));
+    return { r, id, same: q.clips.length === p.clips.length && q.media.length === p.media.length, moved: q.media.every((m, i) => m.path !== p.media[i].path && /imported/.test(m.path)), exists: exists.every(Boolean), listed: (await window.api.listProjects()).some((x) => x.id === id) };
+  }, path.win32.normalize(path.join(S, 'gen', 'paquete.velvix')));
+  check('#10 paquete portable .velvix con medios (exportar e importar)', pk.r.files >= 2 && pk.same && pk.moved && pk.exists && pk.listed, JSON.stringify(pk));
+
+  // #10 version history from the home screen: restore an older version.
+  const ver = await page.evaluate(async () => {
+    const { store } = window.__velvix; await store.flushSave();
+    const p = store.getState().project; await window.api.snapshotProject(p.id);
+    const n = p.clips.length;
+    store.update((d) => { d.clips = d.clips.slice(0, 1); }); await store.flushSave();
+    return { id: p.id, n };
+  });
+  await page.click('.topbar button[title="Volver a proyectos"]');
+  await page.waitForSelector('.home .proj');
+  await page.hover('.home .proj >> nth=0');
+  await page.click('.home .proj >> nth=0 >> button[title="Versiones anteriores"]');
+  await page.waitForSelector('.versions');
+  const vrows = await page.$$eval('.versions > div', (els) => els.map((e) => e.innerText.replace(/\s+/g, ' ')));
+  await page.click(`.versions > div:has-text("${ver.n} clips") >> nth=0 >> button`);
+  await page.waitForTimeout(500);
+  await page.click('.home .proj >> nth=0 >> .thumb');
+  await page.waitForSelector('.editor');
+  const restored = await page.evaluate(() => { const p = window.__velvix.store.getState().project; return { id: p.id, n: p.clips.length }; });
+  check('#10 copias por versión: restaurar desde el inicio', vrows.length >= 2 && restored.id === ver.id && restored.n === ver.n, `${vrows.length} versiones, ${restored.n}/${ver.n} clips`);
+
+  // #10 recovery after an unexpected close: the renderer crashes, the app reloads and offers the project.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.forcefullyCrashRenderer());
+  // Playwright keeps the crashed page object, so the reloaded window is driven from the main process.
+  const inWin = (js) => app.evaluate(({ BrowserWindow }, js) => BrowserWindow.getAllWindows()[0].webContents.executeJavaScript(js), js);
+  let banner = '';
+  for (let i = 0; i < 30 && !banner; i++) { await new Promise((r) => setTimeout(r, 500)); banner = await inWin("document.querySelector('.banner.crash')?.innerText || ''").catch(() => ''); }
+  if (banner) await inWin("document.querySelector('.banner.crash .btn.primary').click()");
+  let rec = null;
+  for (let i = 0; i < 20 && !rec; i++) { await new Promise((r) => setTimeout(r, 500)); rec = await inWin('(() => { const p = window.__velvix.store.getState().project; return p && document.querySelector(".editor") ? { id: p.id, n: p.clips.length } : null; })()').catch(() => null); }
+  check('#10 recuperación tras cierre inesperado', /inesperada/.test(banner) && rec && rec.id === ver.id && rec.n === ver.n, banner.replace(/\s+/g, ' ').slice(0, 90));
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   await app.close();

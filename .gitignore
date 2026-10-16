@@ -4,3 +4,4 @@ release/
 e2e/out*.mp4
 e2e/*.png
 e2e/gen/
+e2e/out*.srt

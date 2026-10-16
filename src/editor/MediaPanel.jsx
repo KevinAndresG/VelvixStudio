@@ -8,10 +8,11 @@ import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaption
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
 import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
+import BrandTab from './BrandTab.jsx';
 
 const TABS = [
   ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
-  ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'],
+  ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'], ['brand', 'diamond', 'Marca'],
 ];
 
 export default function MediaPanel() {
@@ -35,6 +36,7 @@ export default function MediaPanel() {
         {tab === 'filters' && <FiltersTab />}
         {tab === 'captions' && <CaptionsTab />}
         {tab === 'transcript' && <TranscriptTab />}
+        {tab === 'brand' && <BrandTab />}
       </div>
     </aside>
   );

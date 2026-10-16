@@ -10,6 +10,8 @@ export async function openProject(project) {
   // Flag media whose file moved or was deleted so the editor can offer relinking.
   for (const m of project.media) m.missing = !(await api.fileExists(m.path));
   setState({ project, view: 'editor', past: [], future: [], selection: [], time: 0, playing: false });
+  api.sessionSet(project.id); // still set on next start = unexpected close → offer recovery
+  api.snapshotProject(project.id); // version as it was when opened
 }
 
 const ago = (ts) => {
@@ -27,9 +29,32 @@ export default function Home() {
   const [confirm, setConfirm] = useState(null);
   const [aspect, setAspect] = useState('16:9');
   const [drag, setDrag] = useState(false);
+  const [crashed, setCrashed] = useState(null);
+  const [versions, setVersions] = useState(null); // { p, list }
 
   const refresh = () => api.listProjects().then(setList);
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); api.sessionCrashed().then((c) => c && setCrashed(c.projectId)); }, []);
+  const crashedProj = crashed && list && list.find((p) => p.id === crashed);
+
+  const showVersions = async (p) => setVersions({ p, list: await api.projectVersions(p.id) });
+  const restore = async (v) => {
+    await api.restoreVersion(versions.p.id, v.at);
+    setVersions(null); refresh();
+    toast(`Versión del ${new Date(v.at).toLocaleString()} restaurada`);
+  };
+  const exportPackage = async (p) => {
+    const { videos } = await api.paths();
+    const out = await api.saveDialog({ defaultPath: `${videos}\\${p.name.replace(/[<>:"/\\|?*]+/g, '_')}.velvix`, filters: [{ name: 'Paquete de Velvix Studio', extensions: ['velvix'] }] });
+    if (!out) return;
+    toast('Creando paquete…');
+    try { const r = await api.exportPackage(p.id, out); toast(`Paquete creado: ${r.files} archivos, ${Math.round(r.bytes / 1048576)} MB`); } catch (e) { toast(`No se pudo crear el paquete: ${e.message}`, 'error'); }
+  };
+  const importPackage = async (file) => {
+    file = file || await api.openFile([{ name: 'Paquete de Velvix Studio', extensions: ['velvix'] }]);
+    if (!file) return;
+    toast('Importando paquete…');
+    try { await api.importPackage(file); await refresh(); toast('Proyecto importado'); } catch (e) { toast(`No se pudo importar: ${e.message}`, 'error'); }
+  };
 
   const create = async (files = []) => {
     const p = newProject(`Proyecto ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`, aspect);
@@ -60,11 +85,28 @@ export default function Home() {
   return (
     <div className={`home ${drag ? 'dragging' : ''}`}
       onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)}
-      onDrop={(e) => { e.preventDefault(); setDrag(false); const files = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean); if (files.length) create(files); }}>
+      onDrop={(e) => {
+        e.preventDefault(); setDrag(false);
+        const files = [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean);
+        const pkgs = files.filter((f) => /\.velvix$/i.test(f)), media = files.filter((f) => !/\.velvix$/i.test(f));
+        (async () => { for (const f of pkgs) await importPackage(f); if (media.length) create(media); })();
+      }}>
       <header className="home-top">
         <div className="brand"><span className="logo">V</span><b>Velvix</b> Studio</div>
-        <div className="search"><Icon name="search" size={16} /><input placeholder="Buscar proyectos" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        <div className="home-actions">
+          <button className="btn import-pkg" onClick={() => importPackage()} title="Abrir un proyecto .velvix con sus medios"><Icon name="upload" size={15} /> Importar paquete</button>
+          <div className="search"><Icon name="search" size={16} /><input placeholder="Buscar proyectos" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+        </div>
       </header>
+      {crashedProj && (
+        <div className="banner crash">
+          <Icon name="reverse" size={18} />
+          <p>Velvix Studio se cerró de forma inesperada. <b>{crashedProj.name}</b> se guardó automáticamente.</p>
+          <button className="btn primary" onClick={() => { setCrashed(null); open(crashedProj.id); }}>Recuperar</button>
+          <button className="btn" onClick={() => { setCrashed(null); showVersions(crashedProj); }}>Versiones</button>
+          <IconBtn icon="x" title="Descartar" onClick={() => setCrashed(null)} />
+        </div>
+      )}
       <section className="hero">
         <div className="new-card" onClick={() => create()}>
           <div className="plus"><Icon name="plus" size={30} /></div>
@@ -101,6 +143,8 @@ export default function Home() {
               <div className="proj-actions">
                 <IconBtn icon="edit" title="Renombrar" size={15} onClick={() => setRenaming(p.id)} />
                 <IconBtn icon="copy" title="Duplicar" size={15} onClick={() => duplicate(p.id)} />
+                <IconBtn icon="reverse" title="Versiones anteriores" size={15} onClick={() => showVersions(p)} />
+                <IconBtn icon="download" title="Exportar paquete (.velvix con medios)" size={15} onClick={() => exportPackage(p)} />
                 <IconBtn icon="trash" title="Eliminar" size={15} onClick={() => setConfirm(p)} />
               </div>
             </div>
@@ -111,6 +155,21 @@ export default function Home() {
         <Modal title="Eliminar proyecto" onClose={() => setConfirm(null)} width={420}>
           <p className="modal-text">¿Eliminar <b>{confirm.name}</b>? Esta acción no se puede deshacer. Tus archivos originales no se borran.</p>
           <div className="modal-actions"><button className="btn" onClick={() => setConfirm(null)}>Cancelar</button><button className="btn danger" onClick={() => del(confirm.id)}>Eliminar</button></div>
+        </Modal>
+      )}
+      {versions && (
+        <Modal title={`Versiones de ${versions.p.name}`} onClose={() => setVersions(null)} width={480}>
+          <p className="modal-text">Se guarda una copia al abrir el proyecto y cada 5 minutos de edición (las 30 más recientes).</p>
+          <div className="versions">
+            {!versions.list.length && <p className="empty">Aún no hay versiones guardadas.</p>}
+            {versions.list.map((v) => (
+              <div key={v.at}>
+                <span>{new Date(v.at).toLocaleString()}</span>
+                <small>{v.clips} clips · {fmtTime(v.duration)}</small>
+                <button className="btn sm" onClick={() => restore(v)}>Restaurar</button>
+              </div>
+            ))}
+          </div>
         </Modal>
       )}
       {drag && <div className="drop-hint"><Icon name="upload" size={40} /><p>Suelta para crear un proyecto</p></div>}

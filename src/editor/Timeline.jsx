@@ -113,11 +113,12 @@ function Ruler({ zoom, width, fps, onSeek }) {
   return <div className="ruler" style={{ width }} onPointerDown={onSeek}>{ticks}</div>;
 }
 
-function TrackHead({ track }) {
+function TrackHead({ track, onDown, dragging }) {
   const set = (k) => update((p) => { const t = p.tracks.find((x) => x.id === track.id); t[k] = !t[k]; });
   const icon = { video: 'film', audio: 'music', text: 'type', effect: 'sparkles' }[track.kind];
   return (
-    <div className={`track-head ${track.main ? 'main' : ''}`} style={{ height: rowH(track) }}>
+    <div className={`track-head ${track.main ? 'main' : ''} ${dragging ? 'dragging' : ''}`} style={{ height: rowH(track) }}
+      onPointerDown={(e) => !e.target.closest('button') && onDown(e, track)} title="Arrastra para reordenar la pista">
       <Icon name={track.caption ? 'cc' : icon} size={14} />
       <span title={track.name}>{track.main ? 'Principal' : track.name}</span>
       <div className="th-btns">
@@ -142,6 +143,8 @@ export default function Timeline() {
   const [menu, setMenu] = useState(null);
   const [height, setHeight] = useState(() => +localStorage.getItem('tlHeight') || 300);
   const [snapLine, setSnapLine] = useState(null);
+  const [box, setBox] = useState(null); // box selection rectangle in .tracks coordinates
+  const [trackDrag, setTrackDrag] = useState(null); // { id, y }
   const duration = projectDuration(project);
   const [viewW, setViewW] = useState(1000);
 
@@ -203,6 +206,56 @@ export default function Timeline() {
     go(e);
     const up = () => { window.removeEventListener('pointermove', go); window.removeEventListener('pointerup', up); };
     window.addEventListener('pointermove', go); window.addEventListener('pointerup', up);
+  };
+
+  // Empty area: click seeks, drag draws a selection box (Shift/Ctrl adds to the selection).
+  const onEmptyDown = (e) => {
+    if (e.button !== 0) return;
+    const r = e.currentTarget.getBoundingClientRect(), x0 = e.clientX - r.left, y0 = e.clientY - r.top;
+    const base = e.shiftKey || e.ctrlKey ? selection : [];
+    let boxing = false;
+    const move = (ev) => {
+      const x1 = ev.clientX - r.left, y1 = ev.clientY - r.top;
+      if (!boxing && Math.hypot(x1 - x0, y1 - y0) < 5) return;
+      boxing = true;
+      const bx = { x: Math.min(x0, x1), y: Math.min(y0, y1), w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+      setBox(bx);
+      const ids = project.clips.filter((c) => {
+        const i = tracks.findIndex((t) => t.id === c.trackId);
+        return i >= 0 && c.start * zoom < bx.x + bx.w && clipEnd(c) * zoom > bx.x && trackY[i] < bx.y + bx.h && trackY[i] + rowH(tracks[i]) > bx.y;
+      }).map((c) => c.id);
+      setState({ selection: [...new Set([...base, ...ids])] });
+    };
+    const up = (ev) => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setBox(null);
+      if (!boxing) setState({ selection: base, time: Math.min(xToTime(ev.clientX), Math.max(duration, 0)), playing: false });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
+  // Drag a track head to reorder it (visual tracks among visual tracks, audio among audio).
+  const onTrackDown = (e, track) => {
+    if (e.button !== 0) return;
+    const heads = e.currentTarget.parentElement, y0 = e.clientY, audio = (t) => t.kind === 'audio';
+    const from = tracks.indexOf(track), others = tracks.filter((t) => t !== track);
+    const lo = others.findIndex((t) => audio(t) === audio(track)), hi = others.findLastIndex((t) => audio(t) === audio(track)) + 1;
+    let to = null;
+    const move = (ev) => {
+      if (to == null && Math.abs(ev.clientY - y0) < 5) return;
+      const y = ev.clientY - heads.getBoundingClientRect().top;
+      let i = trackY.findIndex((ty, k) => y < ty + rowH(tracks[k]) / 2);
+      if (i < 0) i = tracks.length;
+      to = clamp(i > from ? i - 1 : i, lo < 0 ? 0 : lo, lo < 0 ? others.length : hi); // index among the other tracks
+      setTrackDrag({ id: track.id, y: to < others.length ? trackY[tracks.indexOf(others[to])] : totalH });
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
+      setTrackDrag(null);
+      if (to == null || to === from) return;
+      update((p) => { const [t] = p.tracks.splice(from, 1); p.tracks.splice(to, 0, t); });
+    };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
   const onClipDown = (e, clip) => {
@@ -364,14 +417,15 @@ export default function Timeline() {
       <div className="tl-body">
         <div className="tl-heads" style={{ paddingTop: 26 }}>
           <div className="heads-inner" style={{ transform: `translateY(${-(scrollRef.current ? scrollRef.current.scrollTop : 0)}px)` }}>
-            {tracks.map((t) => <TrackHead key={t.id} track={t} />)}
+            {tracks.map((t) => <TrackHead key={t.id} track={t} onDown={onTrackDown} dragging={trackDrag && trackDrag.id === t.id} />)}
+            {trackDrag && <div className="track-drop" style={{ top: trackDrag.y }} />}
           </div>
         </div>
         <div className="tl-scroll" ref={scrollRef} onDragOver={(e) => e.preventDefault()} onDrop={onDrop}
           onScroll={(e) => { const h = e.currentTarget.parentElement.querySelector('.heads-inner'); if (h) h.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`; }}>
           <div className="tl-content" style={{ width: contentW }}>
             <Ruler zoom={zoom} width={contentW} fps={project.fps} onSeek={seekFrom} />
-            <div className="tracks" style={{ height: Math.max(totalH + 60, 120) }} onPointerDown={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('track')) { setState({ selection: [] }); seekFrom(e); } }}>
+            <div className="tracks" style={{ height: Math.max(totalH + 60, 120) }} onPointerDown={(e) => { if (e.target === e.currentTarget || e.target.classList.contains('track')) onEmptyDown(e); }}>
               {tracks.map((t, i) => (
                 <div key={t.id} className={`track k-${t.kind} ${t.main ? 'main' : ''} ${t.hidden ? 'hidden' : ''} ${drag && drag.trackId === t.id ? 'drop' : ''}`} style={{ top: trackY[i], height: rowH(t) }}>
                   {project.clips.filter((c) => c.trackId === t.id).map((c) => (
@@ -383,6 +437,7 @@ export default function Timeline() {
               ))}
               {!project.clips.length && <div className="tl-empty" style={{ top: 8 }}>Arrastra aquí tus videos, fotos y audio</div>}
               {drag && (drag.trackId === 'above' || drag.trackId === 'below') && <div className="new-track-hint" style={{ top: drag.trackId === 'above' ? 0 : totalH }} />}
+              {box && <div className="box-select" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />}
             </div>
             {(project.markers || []).map((m) => (
               <span key={m.id} className={`marker${m.beat ? " beat" : ""}`} style={{ left: m.t * zoom }} title={m.beat ? "Beat (clic derecho para quitar)" : "Marcador (clic derecho para quitar)"}
