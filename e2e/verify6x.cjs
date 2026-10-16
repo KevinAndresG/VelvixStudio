@@ -27,7 +27,8 @@ const G = (n) => path.join(GEN, n);
   const app = await _electron.launch({ executablePath: process.env.PKG ? APP + '/release/win-unpacked/Velvix Studio.exe' : require(APP + '/node_modules/electron'), args: process.env.PKG ? [] : [APP], cwd: APP });
   const page = await app.firstWindow();
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  // Whisper's ORT session logs a harmless node-placement warning as console.error.
+  page.on('console', (m) => { if (m.type() === 'error' && !/VerifyEachNodeIsAssignedToAnEp/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
   await page.waitForSelector('.new-card'); await page.click('.new-card'); await page.waitForSelector('.editor');
   const ev = (fn, arg) => page.evaluate(fn, arg);

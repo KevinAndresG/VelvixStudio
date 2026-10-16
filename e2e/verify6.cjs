@@ -281,7 +281,7 @@ const frameCount = (f) => grab(f, { n: 100000, w: 16, h: 16 }).length;
   const up = await ev(() => window.__velvix.store.getState().project.clips[0].alt);
   const upp = probe(up.path), nUp = frameCount(up.path), nLow = frameCount(LOW);
   // WebGPU has no PRelu: the downloaded model is rewritten without it (else every layer runs on the CPU, ~6× slower).
-  const esr = fs.readFileSync(path.join(process.env.APPDATA, 'Velvix Studio', 'models', 'realesr-general-x4v3-webgpu.onnx'));
+  const esr = fs.readFileSync(await ev(() => window.api.getModel('esrgan'))); // downloads it if the upscale came from the cache
   check('#27b modelo de mejora sin PRelu (todo en la GPU)', esr.includes('prelu0_a') && esr.includes('prelu32_e') && !esr.includes('prelu33_'), `${(tUp / nUp).toFixed(2)} s por cuadro`);
   // Quality against the 640×360 reference: PSNR and edge energy, vs. plain bicubic.
   const BIC = path.join(GEN, 'bicubica.mp4'); ff('-i', LOW, '-vf', 'scale=640:360:flags=bicubic', '-c:v', 'libx264', '-crf', '12', BIC);
