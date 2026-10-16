@@ -85,7 +85,7 @@ Base común: reemplazar los filtros CSS/canvas de `render.js` por shaders WebGL 
 - [ ] #18 A — **Color pro**: HSL por color, curvas RGB, ruedas lift/gamma/gain, scopes (histograma / forma de onda).
 - [ ] #27a C — **Retoque facial ligero** (suavizado de piel con filtro bilateral en shader; sin IA).
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 5 completa siguiendo las reglas de toda sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 5 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
 
 ### Sesión 6 — IA visual y análisis de video
 Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer después de las Sesiones 1 y 5 (usa transcripción y WebGL).
@@ -95,14 +95,14 @@ Base común: modelos ONNX de visión en worker + análisis con ffmpeg. Hacer des
 - [ ] #26 C — **Video largo → clips cortos** (transcripción + energía de audio + escenas).
 - [ ] #27b C — **Mejorar resolución con IA** (upscaling).
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 6 completa siguiendo las reglas de toda sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 6 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
 
 ### Sesión 7 — Contenido creativo
 Base común: catálogos de `model.js`, `drawText` en `render.js`, panel izquierdo.
 - [ ] #8 B — **Plantillas de proyecto**, **stickers animados** (GIF/Lottie), **texto curvo y 3D**, **estilos distintos por palabra**.
 - [ ] #25 B — **Biblioteca de música y efectos de sonido libres (CC0)**, descargable aparte; nunca música con copyright.
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 7 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
 
 ### Sesión 8 — Lanzamiento
 Al final, cuando las features estén listas.
@@ -111,7 +111,7 @@ Al final, cuando las features estén listas.
 - [ ] Licencias: cambiar a build LGPL de ffmpeg si se va a vender; pantalla "Acerca de" con licencias de terceros. **Ojo:** las voces MMS-TTS (#9b) son CC-BY-NC 4.0 (no comercial): cambiarlas antes de vender (p. ej. Piper con voces de licencia libre). Revisar también la licencia de los modelos RNNoise (`cb.rnnn`) y UVR.
 - [ ] #1 — **Firma de código** (requiere comprar certificado OV/EV; quita el aviso de SmartScreen). Es un trámite, no código.
 
-> Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión.`
+> Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión. Al terminar, revisa punto por punto cada requisito de esta sesión en la app real (también su integración con lo de sesiones anteriores), arregla lo que falle en un commit aparte y agrega pruebas E2E solo si de verdad hacen falta. Luego da un informe corto (qué hiciste, qué falló, qué arreglaste, versión y commits) y termina diciendo que está listo para /clear, así se limpia el contexto antes de la siguiente sesión.`
 
 **Orden recomendado:** 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8. La Sesión 4 puede adelantarse si aparecen fallos de exportación.
 
