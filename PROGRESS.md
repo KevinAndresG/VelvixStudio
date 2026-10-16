@@ -128,6 +128,7 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - La Sesión 3 genera audio de prueba en `e2e/gen/` (voz + música sintética, voz con ruido, clic a 120 BPM, base de 50 Hz) y exporta `out-duck.mp4`. Descarga una vez el modelo MDX (~67 MB), `cb.rnnn` y MMS-TTS español.
 - La Sesión 4 exporta `out-ref/out-retry/out-resume.mp4` (ramp.mp4 con un fallo simulado vía `window.__velvixFail = { at, n }`: reintento automático y Reanudar; se comparan cuadro a cuadro), `out-range.mp4` + `out-range.srt` y `out-burn.mp4` (preset TikTok, rango 1–3 s, subtítulos aparte o quemados); prueba selección por caja y reordenar pistas con el ratón, kit de marca, paquete `.velvix`, versiones desde el inicio y recuperación tras `forcefullyCrashRenderer`.
 - `node e2e/long.cjs` → #17: genera `e2e/gen/long60.mp4` (60 min) y lo exporta a 480p con un fallo a la mitad. Resultado (oct 2026): 108000 cuadros exactos, 60:00 de audio, 320 s (~337 fps), memoria total 0.9–1.1 GB sin crecer. `MIN=5` para una versión corta.
+- `node e2e/verify4.cjs` → verificación de la Sesión 4 en la app real: mata la app con `taskkill` al 45 % de una exportación de 2 min y la reanuda (mismos cuadros y audio que una exportación entera), rango con curva + keyframes + subtítulos quemados contra el video completo, logo de marca en 16:9 y 9:16, deshacer/rehacer de reordenar pistas y de borrar una selección por caja, rotación de versiones y un paquete con rutas con espacios y acentos. Luego `PKG=1 node e2e/verify4.cjs pkg` abre ese paquete en la app empaquetada.
 - `node e2e/cap.cjs` → subtítulos automáticos. `node e2e/smoke.cjs` → capturas rápidas.
 - `PKG=1 node e2e/full.cjs` → lo mismo contra la app empaquetada (`npm run dist` antes).
 - Medios de prueba en `e2e/media/`.
@@ -162,6 +163,10 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - **Exportación reanudable**: los chunks del `VideoEncoder` llegan mientras se espera el IPC; hay que sacar el lote (`chunks = []`) **antes** del `await` o se pierden cuadros. Cada pasada de reintento fuerza keyframe en su primer cuadro y trunca el temporal al offset del último punto de control.
 - Tras `forcefullyCrashRenderer` + `reload` el objeto `page` de Playwright queda "Target crashed": la prueba maneja la ventana recargada con `webContents.executeJavaScript` desde el main.
 - En `String.replace` de JS el reemplazo interpreta `$$`, `$&`… (al insertar código con `page.$$eval` usar una función de reemplazo).
+
+- La firma que identifica una exportación reanudable no debe incluir campos que cambian al reabrir (`media.missing`, miniaturas, nombre, fechas): con ellos, tras matar la app nunca aparecía Reanudar.
+- Limpiar temporales con `fs.rm` puede fallar con EBUSY si otra ventana los tiene abiertos (Windows): ignorar el error.
+- Borrar un proyecto importado borra también `imported/<id>` (antes sus medios quedaban en disco). Solo se guarda una exportación reanudable a la vez (una nueva borra los `exp-*` anteriores). Restaurar una versión pide confirmación y guarda la actual como versión.
 
 ## Notas
 - La primera vez que se usan subtítulos se descarga el modelo de voz (75–500 MB). Después funciona sin internet.

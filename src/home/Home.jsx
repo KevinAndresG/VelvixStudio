@@ -159,14 +159,16 @@ export default function Home() {
       )}
       {versions && (
         <Modal title={`Versiones de ${versions.p.name}`} onClose={() => setVersions(null)} width={480}>
-          <p className="modal-text">Se guarda una copia al abrir el proyecto y cada 5 minutos de edición (las 30 más recientes).</p>
+          <p className="modal-text">Se guarda una copia al abrir el proyecto y cada 5 minutos de edición (las 30 más recientes). Al restaurar, la versión actual también se guarda como copia.</p>
           <div className="versions">
             {!versions.list.length && <p className="empty">Aún no hay versiones guardadas.</p>}
             {versions.list.map((v) => (
               <div key={v.at}>
                 <span>{new Date(v.at).toLocaleString()}</span>
                 <small>{v.clips} clips · {fmtTime(v.duration)}</small>
-                <button className="btn sm" onClick={() => restore(v)}>Restaurar</button>
+                {versions.ask === v.at
+                  ? <button className="btn sm danger confirm-restore" onClick={() => restore(v)}>¿Reemplazar la actual?</button>
+                  : <button className="btn sm" onClick={() => setVersions({ ...versions, ask: v.at })}>Restaurar</button>}
               </div>
             ))}
           </div>

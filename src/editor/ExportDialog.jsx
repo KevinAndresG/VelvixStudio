@@ -74,7 +74,9 @@ export default function ExportDialog({ onClose }) {
   const burn = !hasCaptions || subs !== 'srt';
   const renderProject = useMemo(() => (burn ? project : { ...project, clips: project.clips.filter((c) => !c.caption) }), [project, burn]);
   // Identifies one export (content + settings): a checkpoint is only resumed for the very same export.
-  const sig = useMemo(() => JSON.stringify([{ ...renderProject, updatedAt: 0, thumb: null, name: '' }, W, H, outFps, quality, a, b]), [renderProject, W, H, outFps, quality, a, b]);
+  // Only what changes the pixels: not name/dates/thumbnails or the `missing` flag openProject adds on reopen.
+  const sig = useMemo(() => JSON.stringify([{ ...renderProject, updatedAt: 0, thumb: null, name: '', transcript: null, media: renderProject.media.map(({ missing, thumb, strip, ...m }) => m) },
+    W, H, outFps, quality, a, b]), [renderProject, W, H, outFps, quality, a, b]);
   const resumable = format === 'mp4' && !audioOnly;
   useEffect(() => { if (state.phase === 'setup' || state.phase === 'error') window.api.exportResumable(sig).then((r) => setResume(resumable ? r : null)); }, [sig, resumable, state.phase]);
 

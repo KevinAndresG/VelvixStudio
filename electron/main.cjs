@@ -176,7 +176,11 @@ ipcMain.handle('projects:save', async (_e, project) => {
   if (Date.now() - (lastBackup.get(project.id) || 0) > 5 * 60e3) await snapshot(project.id);
   return true;
 });
-ipcMain.handle('projects:delete', async (_e, id) => { await fsp.rm(projFile(id), { force: true }); await fsp.rm(backupDir(id), { recursive: true, force: true }); });
+ipcMain.handle('projects:delete', async (_e, id) => {
+  await fsp.rm(projFile(id), { force: true });
+  await fsp.rm(backupDir(id), { recursive: true, force: true });
+  await fsp.rm(path.join(DATA, 'imported', id.replace(/[^\w-]/g, '')), { recursive: true, force: true }); // media of an imported package
+});
 
 // ---------- version history ----------
 const lastBackup = new Map();
@@ -579,7 +583,10 @@ ipcMain.handle('export:start', async (_e, o) => {
   if (o.videoInput === 'h264') {
     const key = hash(o.sig), f = expFiles(key);
     if (o.resume) await fsp.truncate(f.h264, o.resume.off);
-    else await fsp.rm(f.state, { force: true });
+    else {
+      // One resumable export at a time: a new export drops older temp streams (they can be GBs).
+      for (const x of await fsp.readdir(CACHE)) if (/^exp-\w+\.(h264|json)$/.test(x)) await fsp.rm(path.join(CACHE, x), { force: true }).catch(() => {}); // in use by another window: leave it
+    }
     job = { file: true, o, key, f, fd: fs.openSync(f.h264, o.resume ? 'r+' : 'w'), pos: o.resume ? o.resume.off : 0 };
     return { ok: true, key };
   }
