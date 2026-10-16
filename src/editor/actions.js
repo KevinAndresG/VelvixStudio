@@ -58,30 +58,48 @@ export async function importPaths(paths) {
       const media = { id: uid(), path, name: path.split(/[\\/]/).pop(), ...info, thumb: null, strip: null, proxy: null, reversed: null };
       update((p) => { p.media.push(media); });
       added.push(media);
-      // Background work: thumbnails + compatibility proxy.
-      (async () => {
-        try {
-          if (info.type === 'video' && !PLAYABLE.includes(info.vcodec)) {
-            setJob(jobId, { label: `Optimizando ${media.name}`, progress: 0 });
-            const off = api.onJobProgress((d) => d.jobId === jobId && setJob(jobId, { progress: d.progress }));
-            const proxy = await api.transcode(path, 'proxy', info.duration, jobId);
-            off();
-            patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) m.proxy = proxy; });
-          }
-          if (info.type !== 'audio') {
-            const thumb = await api.thumb(path, info.type === 'image' ? 0 : Math.min(1, info.duration / 3), 160); // a still has no frame at 1 s
-            const strip = info.type === 'video' ? await api.strip(path, info.duration, 16) : thumb;
-            patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) Object.assign(m, { thumb, strip }); });
-          }
-        } catch (e) { toast(`Error procesando ${media.name}: ${e.message}`, 'error'); }
-        setJob(jobId, null);
-      })();
+      prepareMedia(media, jobId);
     } catch (e) {
       setJob(jobId, null);
       toast(`No se pudo importar ${path.split(/[\\/]/).pop()}`, 'error');
     }
   }
   return added;
+}
+
+// Background work: compatibility proxy (codecs Chromium can't play, or non-square pixels), then thumbnails from
+// what the clip shows. `reverse` remakes the reversed copy from the new proxy.
+async function prepareMedia(media, jobId = uid(), reverse = false) {
+  const { path, duration, type } = media, patch = (o) => patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) Object.assign(m, o); });
+  setJob(jobId, { label: `Importando ${media.name}`, progress: 0 });
+  try {
+    let src = media.proxy || path;
+    if (type === 'video' && !media.proxy && (!PLAYABLE.includes(media.vcodec) || media.sar !== 1)) {
+      setJob(jobId, { label: `Optimizando ${media.name}`, progress: 0 });
+      const off = api.onJobProgress((d) => d.jobId === jobId && setJob(jobId, { progress: d.progress }));
+      src = await api.transcode(path, 'proxy', duration, jobId).finally(off);
+      patch({ proxy: src });
+      if (reverse) patch({ reversed: await api.transcode(src, 'reverse', duration, jobId) });
+    }
+    if (type !== 'audio') {
+      const thumb = await api.thumb(src, type === 'image' ? 0 : Math.min(1, duration / 3), 160); // a still has no frame at 1 s
+      const strip = type === 'video' ? await api.strip(src, duration, 16) : thumb;
+      patch({ thumb, strip });
+    }
+  } catch (e) { toast(`Error procesando ${media.name}: ${e.message}`, 'error'); }
+  setJob(jobId, null);
+}
+
+// Videos without `sar` (projects saved before 1.6.1, relinked files): probe again. Anamorphic ones had their coded
+// size and no square-pixel proxy: redo size, proxy, thumbnails and reversed copy.
+export async function reprobeMedia() {
+  for (const m of proj().media.filter((x) => x.type === 'video' && x.sar == null && !x.missing)) {
+    const info = await api.probe(m.path).catch(() => null);
+    if (!info) continue;
+    const fixed = info.sar === 1 ? { ...m, sar: 1 } : { ...m, width: info.width, height: info.height, sar: info.sar, proxy: null, reversed: null };
+    patchSilently((p) => { const x = p.media.find((k) => k.id === m.id); if (x) Object.assign(x, fixed); });
+    if (!fixed.proxy && (fixed.sar !== 1 || !PLAYABLE.includes(fixed.vcodec))) prepareMedia(fixed, uid(), !!m.reversed);
+  }
 }
 
 export async function importDialog() {
@@ -222,7 +240,7 @@ export async function freezeFrame() {
   if (!c) return toast('Coloca el cursor sobre un video');
   const media = mediaOf(p, c);
   const src = sourceTime(c, t, null);
-  const png = await api.frame(media.path, src);
+  const png = await api.frame(media.proxy || media.path, src);
   const info = await api.probe(png);
   const fm = { id: uid(), path: png, name: 'Congelado.png', ...info, type: 'image', thumb: png, strip: png };
   splitAtPlayhead();

@@ -3,7 +3,7 @@ import { useStore, getState, update, toast } from '../store.js';
 import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER } from '../engine/model.js';
 import { cssFilter } from '../engine/render.js';
 import { Icon, IconBtn, Select, Slider, Toggle } from '../ui.jsx';
-import { importDialog, importPaths, addToTimeline, addText, addSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently } from './actions.js';
+import { importDialog, importPaths, addToTimeline, addText, addSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
 import { neuralTTS, NEURAL_LANGS } from './audioai.js';
@@ -49,7 +49,8 @@ function MediaCard({ m }) {
   const relink = async () => {
     const paths = await window.api.openMedia();
     if (!paths[0]) return;
-    update((p) => { const x = p.media.find((k) => k.id === m.id); x.path = paths[0]; x.missing = false; x.proxy = null; x.reversed = null; });
+    update((p) => { const x = p.media.find((k) => k.id === m.id); x.path = paths[0]; x.missing = false; x.proxy = null; x.reversed = null; delete x.sar; });
+    reprobeMedia();
     toast('Archivo vuelto a vincular');
   };
   return (

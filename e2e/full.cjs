@@ -668,6 +668,12 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   }
   if (v6.status !== 0 && fails.length === n6) fails.push(`verify6 terminó con código ${v6.status} ${(v6.stderr || '').slice(-300)}`);
 
+  // ---------- v1.6.1: videos anamórficos (usa retrato.jpg de verify6) ----------
+  const ns = fails.length;
+  const vs = cp3.spawnSync(process.execPath, [path.join(__dirname, 'sar.cjs')], { env: process.env, encoding: 'utf8', timeout: 900000 });
+  for (const line of (vs.stdout || '').split('\n')) if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+  if (vs.status !== 0 && fails.length === ns) fails.push(`sar terminó con código ${vs.status} ${(vs.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);

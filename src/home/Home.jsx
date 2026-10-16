@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { setState, toast } from '../store.js';
 import { newProject, ASPECTS, mediaUrl, uid, fmtTime } from '../engine/model.js';
 import { Icon, IconBtn, Modal } from '../ui.jsx';
-import { importPaths, addToTimeline } from '../editor/actions.js';
+import { importPaths, addToTimeline, reprobeMedia } from '../editor/actions.js';
 
 const api = window.api;
 
@@ -12,6 +12,7 @@ export async function openProject(project) {
   setState({ project, view: 'editor', past: [], future: [], selection: [], time: 0, playing: false });
   api.sessionSet(project.id); // still set on next start = unexpected close → offer recovery
   api.snapshotProject(project.id); // version as it was when opened
+  reprobeMedia();
 }
 
 const ago = (ts) => {

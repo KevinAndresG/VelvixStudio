@@ -310,13 +310,17 @@ ipcMain.handle('media:probe', async (_e, file) => {
     const sd = (v.side_data_list || []).find((s) => s.rotation != null);
     rotation = Math.abs(+(sd ? sd.rotation : (v.tags && v.tags.rotate) || 0)) % 180;
   }
-  let [w, h] = v ? [v.width, v.height] : [0, 0];
+  // Anamorphic video (non-square pixels): Chromium shows it stretched, ffprobe/WebCodecs/ffmpeg see the coded size.
+  // Display size here, and the import makes a square-pixel proxy (same size) so every path sees the same picture.
+  const [sn, sd] = ((v && v.sample_aspect_ratio) || '1:1').split(':').map(Number);
+  const sar = !isImage && sn > 0 && sd > 0 && sn !== sd ? sn / sd : 1;
+  let [w, h] = v ? [sar === 1 ? v.width : Math.trunc((v.width * sar) / 2) * 2, v.height] : [0, 0];
   if (rotation === 90) [w, h] = [h, w];
   const [fn, fd] = ((v && v.avg_frame_rate) || '30/1').split('/').map(Number);
   return {
     type: isImage ? 'image' : v ? 'video' : 'audio',
     duration: isImage ? 5 : +j.format.duration || 0,
-    width: w, height: h, fps: fd ? fn / fd : 30,
+    width: w, height: h, sar, fps: fd ? fn / fd : 30,
     hasAudio: !!a, vcodec: v && v.codec_name, acodec: a && a.codec_name,
   };
 });
@@ -357,9 +361,9 @@ ipcMain.handle('media:peaks', async (_e, file) => {
 
 // Proxy for codecs Chromium can't decode, and reversed copies.
 ipcMain.handle('media:transcode', async (_e, file, kind, duration, jobId) => {
-  const out = path.join(CACHE, `${kind}-${hash(file)}.mp4`);
+  const out = path.join(CACHE, `${kind === 'proxy' ? 'proxy2' : kind}-${hash(file)}.mp4`); // proxy2: square pixels
   if (await exists(out)) return out;
-  const vf = kind === 'reverse' ? ['-vf', 'reverse', '-af', 'areverse'] : ['-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2'];
+  const vf = kind === 'reverse' ? ['-vf', 'reverse', '-af', 'areverse'] : ['-vf', 'scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1'];
   await run(FFMPEG, ['-y', '-i', file, ...vf, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', out + '.part.mp4'], {
     onStderr: (l) => { const t = timeOf(l); if (t != null) send('job:progress', { jobId, progress: Math.min(1, t / duration) }); },
   });
