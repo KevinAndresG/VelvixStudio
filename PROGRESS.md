@@ -175,6 +175,8 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - **WebGL**: `needsGrade` debe iniciar la carga del LUT antes de cualquier `return` temprano (con otro ajuste activo el LUT nunca cargaba en el preview; la exportación sí, porque espera `preloadLuts`).
 - Para benchmarks de canvas no leer con `getImageData` en cada cuadro: Chromium pasa ese canvas a CPU y mide otra cosa. Medir fps reales del preview o la exportación.
 - Comparar preview y exportación con patrones finos (clip1) da diferencias por aliasing del preview reducido: usar degradados suaves.
+- `.used` es una clase global (panel de medios, posición absoluta): no reutilizar nombres genéricos de clase en componentes nuevos (los chips HSL desaparecían).
+- Verificación Sesión 5 (`verify5.cjs`, también en la app empaquetada): logos PNG con alfa graduados sin bordes oscuros, transición entre clips con grados distintos, proyectos viejos sin las claves nuevas, exportación reanudable con LUT idéntica a la entera, LUT en el paquete `.velvix`.
 
 ## Notas
 - La primera vez que se usan subtítulos se descarga el modelo de voz (75–500 MB). Después funciona sin internet.

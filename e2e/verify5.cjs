@@ -81,6 +81,25 @@ function writeLut(file) {
     // Keyframed skin smoothing / LUT intensity go through the generic keyframes.
     const k = M.newClip('video', { start: 0, duration: 4, filter: { ...M.DEFAULT_FILTER, lut }, kf: { 'filter.lutMix': [{ t: 0, v: 0 }, { t: 4, v: 100 }] } });
     o.kfLut = [0, 4].map((t) => M.effectiveFilter(M.groupAt(k, 'filter', t)).lutMix);
+    // Logo with soft edges (PNG alpha) graded while scaled down: edges must stay white, not dark.
+    const logo = document.createElement('canvas'); logo.width = logo.height = 256;
+    { const x = logo.getContext('2d'); x.fillStyle = '#fff'; x.beginPath(); x.arc(128, 128, 100, 0, Math.PI * 2); x.fill(); }
+    const lc = document.createElement('canvas'); lc.width = lc.height = 64; const lx = lc.getContext('2d');
+    const edge = (filter) => { lx.clearRect(0, 0, 64, 64); R.drawVisual(lx, M.newClip('image', { start: 0, duration: 5, fit: 'stretch', filter: { ...M.DEFAULT_FILTER, ...filter } }), 1, { el: logo, w: 256, h: 256 }, 64, 64);
+      const d = lx.getImageData(0, 0, 64, 64).data; let m = 255; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 20 && d[i + 3] < 235) m = Math.min(m, Math.round((d[i] / d[i + 3]) * 255)); return m; };
+    o.edge = [edge({}), edge({ contrast: 1 })];
+    // Transition between two differently graded clips: halfway through a dissolve both grades mix.
+    const tp = { width: 160, height: 90, background: { type: 'black' }, media: [{ id: 'm', type: 'image' }], tracks: [{ id: 'v', kind: 'video', main: true }], clips: [
+      M.newClip('image', { id: 'a', trackId: 'v', mediaId: 'm', start: 0, duration: 2, fit: 'stretch', filter: { ...M.DEFAULT_FILTER, lut } }),
+      M.newClip('image', { id: 'b', trackId: 'v', mediaId: 'm', start: 2, duration: 2, fit: 'stretch', filter: { ...M.DEFAULT_FILTER, saturation: -100 }, transition: { type: 'fade', duration: 1 } }),
+    ] };
+    R.renderFrame(ox, tp, 2, () => ({ el: solid('200,50,10'), w: 64, h: 36 }), 160, 90);
+    o.trans = mean(ox.getImageData(0, 0, 160, 90).data);
+    // Project saved before Sesión 5: filter object without the new keys.
+    const old = { preset: 'vintage', intensity: 100, exposure: 0, brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, hue: 0, fade: 0, vignette: 0, grain: 0, blur: 0, sharpen: 0 };
+    const oc = M.newClip('video', { start: 0, duration: 5, fit: 'stretch' }); oc.filter = old;
+    ox.clearRect(0, 0, 160, 90); R.drawVisual(ox, oc, 1, { el: g, w: 64, h: 36 }, 160, 90);
+    o.old = mean(ox.getImageData(0, 0, 160, 90).data);
     return o;
   }, LUT);
   console.log(JSON.stringify(px));
@@ -95,6 +114,9 @@ function writeLut(file) {
   check('#7 viñeta y grano en shader', px.vignette[0] < px.vignette[1] - 40 && px.grain > 5, `${px.vignette} ${px.grain}`);
   check('#27a suavizar piel solo en tonos de piel', px.skin[1] < px.skin[0] * 0.6 && px.skin[3] > px.skin[2] * 0.9, px.skin.join(' '));
   check('#7 capa de ajuste (efecto con filtro) gradúa lo de abajo', near(px.adjust[0], 55, 4) && near(px.adjust[2], 245, 4), px.adjust.join());
+  check('integración: logos con alfa graduados sin bordes oscuros', px.edge[1] >= px.edge[0] - 8 && px.edge[1] > 230, px.edge.join(' / '));
+  check('integración: transición entre clips con grados distintos', near(px.trans[0], (10 + 77) / 2, 8) && near(px.trans[2], (200 + 77) / 2, 8), px.trans.join());
+  check('integración: proyecto viejo (filtro sin claves nuevas) se gradúa', px.old[0] !== 128 && px.old[0] > px.old[2], px.old.join());
   check('#18 keyframes de intensidad del LUT', px.kfLut[0] === 0 && px.kfLut[1] === 100, px.kfLut.join());
 
   // ---------- Color tab UI on a real clip ----------
@@ -128,9 +150,12 @@ function writeLut(file) {
   await page.click('[data-lut]');
   await page.waitForFunction(() => { const s = window.__velvix.store.getState(); return s.project.clips.find((c) => c.id === s.selection[0]).filter.lut; }, null, { timeout: 5000 }).catch(() => {});
   const f1 = await sel();
+  const chips = await page.$$eval('.hsl-chips button', (b) => b.map((x) => [x.offsetWidth, x.className.trim()]));
+  check('#18 UI: los 8 colores HSL se ven y marcan el elegido/ajustado', chips.length === 8 && chips.every(([w]) => w > 10) && chips[5][1] === 'active adj', JSON.stringify(chips));
   check('#18 UI: rueda, curva, HSL, piel y LUT editan el clip', f1.gainX > 50 && Math.abs(f1.gainY) < 10 && f1.curves.m.length === 3 && Math.abs(f1.curves.m[1].y - 0.75) < 0.03 && f1.hsl.blue[1] === -80 && f1.skin === 40 && /luts/.test(f1.lut) && f1.lutName === 'swap rb',
     JSON.stringify({ gx: f1.gainX, gy: f1.gainY, m: f1.curves.m, hsl: f1.hsl, skin: f1.skin, lut: f1.lutName }));
   await page.screenshot({ path: S + '/10-color.png' });
+  for (const [n, h] of [['curvas', 'Curvas'], ['hsl', 'HSL'], ['piel', 'Retoque facial']]) await page.locator(`.insp section:has(h4:text-is("${h}"))`).screenshot({ path: `${S}/10-color-${n}.png` });
   const undo = await page.evaluate(() => { const { store } = window.__velvix; store.undo(); const s = store.getState(); return s.project.clips.find((c) => c.id === s.selection[0]).filter.lut; });
   check('#18 deshacer la carga del LUT', !undo, String(undo));
   await page.evaluate(() => window.__velvix.store.redo());
@@ -180,6 +205,17 @@ function writeLut(file) {
     return { ok, lut };
   }, path.win32.normalize(path.join(GEN, 'color.velvix')));
   check('#7 el paquete .velvix incluye el LUT', pk.ok, pk.lut);
+
+  // ---------- resumable export (Sesión 4) with the grade: a failure mid-way retries and matches the first export ----------
+  const OUT2 = path.win32.normalize(path.join(S, 'out-color-retry.mp4'));
+  await app.evaluate(({ dialog }, o) => { dialog.showSaveDialog = async () => ({ canceled: false, filePath: o }); }, OUT2);
+  await page.evaluate(() => { window.__velvixFail = { at: 40, n: 1 }; });
+  await page.click('button.btn.primary:has-text("Exportar")'); await page.waitForSelector('.export');
+  await page.click('.export .btn.primary');
+  t = ''; for (let i = 0; i < 120 && !/completa|fall/.test(t); i++) { await page.waitForTimeout(1000); t = await page.evaluate(() => document.querySelector('.export')?.innerText || ''); }
+  await page.click('.export .btn:has-text("Listo"), .export .btn:has-text("Volver")').catch(() => {});
+  let dr = 0; for (const tt of [0.5, 1.5, 2.5]) { const a1 = frameRgb(OUT, tt, 32, 18), b1 = frameRgb(OUT2, tt, 32, 18); for (let i = 0; i < a1.length; i++) dr += Math.abs(a1[i] - b1[i]) / a1.length / 3; }
+  check('integración: exportación reanudable con LUT = exportación entera', /completa/.test(t) && dr < 2, `diferencia media ${dr.toFixed(2)}`);
 
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');

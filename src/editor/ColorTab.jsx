@@ -147,7 +147,8 @@ function CurvesSection({ clip, edit }) {
   const setPts = (next, key) => edit((c) => { c.filter.curves = { m: ID(), r: ID(), g: ID(), b: ID(), ...(c.filter.curves || {}), [ch]: next }; }, key);
   const at = (ev) => {
     const r = ref.current.getBoundingClientRect();
-    return { x: clamp((ev.clientX - r.left) / r.width, 0, 1), y: clamp(1 - (ev.clientY - r.top) / r.height, 0, 1) };
+    const u = (v, a, len) => (((v - a) / len) * (S + 14) - 7) / S; // viewBox has a 7-unit margin so end points show whole
+    return { x: clamp(u(ev.clientX, r.left, r.width), 0, 1), y: clamp(1 - u(ev.clientY, r.top, r.height), 0, 1) };
   };
   const drag = (i, start) => {
     const key = `curve-${ch}-${Date.now()}`;
@@ -175,7 +176,7 @@ function CurvesSection({ clip, edit }) {
       <div className="seg">
         {Object.entries(CH).map(([k, [l]]) => <button key={k} className={ch === k ? 'active' : ''} onClick={() => setCh(k)}>{l}</button>)}
       </div>
-      <svg ref={ref} className="rgb-curve" data-curve={ch} viewBox={`0 0 ${S} ${S}`} onPointerDown={add}>
+      <svg ref={ref} className="rgb-curve" data-curve={ch} viewBox={`-7 -7 ${S + 14} ${S + 14}`} onPointerDown={add}>
         {[0.25, 0.5, 0.75].map((g) => <g key={g}><line x1={g * S} x2={g * S} y1={0} y2={S} /><line y1={g * S} y2={g * S} x1={0} x2={S} /></g>)}
         <line x1={0} y1={S} x2={S} y2={0} className="diag" />
         <polyline points={line} style={{ stroke: CH[ch][1] }} />
@@ -205,7 +206,7 @@ function HslSection({ clip, edit }) {
       <div className="hsl-chips">
         {HSL.map(([k, col, name]) => {
           const used = clip.filter.hsl && clip.filter.hsl[k] && clip.filter.hsl[k].some((x) => x);
-          return <button key={k} title={name} data-hsl={k} className={`${sel === k ? 'active' : ''} ${used ? 'used' : ''}`} style={{ background: col }} onClick={() => setSel(k)} />;
+          return <button key={k} title={name} data-hsl={k} className={`${sel === k ? 'active' : ''} ${used ? 'adj' : ''}`} style={{ background: col }} onClick={() => setSel(k)} />;
         })}
       </div>
       <Slider label={`Tono · ${HSL.find((h) => h[0] === sel)[2]}`} value={v[0]} min={-100} max={100} reset={0} onChange={(x) => set(0, x, 'hsl-h-' + sel)} />
