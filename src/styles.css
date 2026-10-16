@@ -124,7 +124,9 @@ kbd { font: 11px Consolas, monospace; background: var(--bg4); border: 1px solid 
 .proj-name:hover, .proj-name:focus { border-color: var(--line2) !important; background: var(--bg3) !important; }
 .saved { color: var(--tx3); font-size: 11.5px; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 .jobs { display: flex; align-items: center; gap: 8px; color: var(--tx2); font-size: 12px; background: var(--bg3); padding: 5px 12px; border-radius: 16px; max-width: 360px; }
-.jobs span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jobs span:not(.spinner) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-cancel { background: none; border: 0; color: var(--tx2); padding: 0 2px; cursor: pointer; }
+.job-cancel:hover { color: var(--tx1, #fff); }
 .workspace { flex: 1; display: flex; min-height: 0; }
 
 /* ---------- left panel ---------- */

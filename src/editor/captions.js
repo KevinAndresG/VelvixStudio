@@ -64,6 +64,8 @@ export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
 
 let worker = null;
 export const getWorker = () => (worker = worker || new Worker(new URL('./whisper.worker.js', import.meta.url), { type: 'module' }));
+// Cancel = kill the worker (models reload from the browser cache on the next job).
+export const resetWorker = () => { if (worker) worker.terminate(); worker = null; };
 // One job at a time: transcription and translation share the worker's onmessage.
 let queue = Promise.resolve();
 export const exclusive = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };

@@ -4,15 +4,18 @@ import { getState, update, toast, setJob } from '../store.js';
 import { uid, clipEnd, mediaOf, newClip, mediaUrl, subClip } from '../engine/model.js';
 import { audioSegments } from '../engine/sources.js';
 import { makeFFT, hann } from '../engine/fft.js';
-import { getWorker, exclusive } from './captions.js';
+import { getWorker, exclusive, resetWorker } from './captions.js';
 import { importPaths, ensureTrack, mainTrack, addToTimeline } from './actions.js';
 
 const api = window.api;
 const f32 = (raw) => new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
 const hash = (s) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619) >>> 0; return h.toString(36); };
 
+let cancelCurrent = null;
+export const cancelAI = () => cancelCurrent && cancelCurrent();
 function workerTask(msg, transfer, doneType, onProgress) {
   return exclusive(() => new Promise((resolve, reject) => {
+    cancelCurrent = () => { resetWorker(); reject(new Error('Cancelado')); };
     const w = getWorker();
     w.onmessage = ({ data }) => {
       if (data.type === 'download') onProgress('Descargando modelo (solo la primera vez)…', data.progress);
@@ -21,7 +24,7 @@ function workerTask(msg, transfer, doneType, onProgress) {
       if (data.type === doneType) resolve(data);
     };
     w.postMessage(msg, transfer);
-  }));
+  }).finally(() => { cancelCurrent = null; }));
 }
 
 // ---------- #15 isolate voice / remove music ----------
@@ -40,6 +43,7 @@ export async function stemsOf(media) {
     const all = f32(await api.decodeAudio(media.proxy || media.path, 44100, 2)), n = all.length / 2;
     const L = new Float32Array(n), R = new Float32Array(n);
     for (let i = 0; i < n; i++) { L[i] = all[2 * i]; R[i] = all[2 * i + 1]; }
+    setJob(jobId, { cancel: cancelAI });
     const r = await workerTask({ task: 'stems', L, R, url: mediaUrl(model) }, [L.buffer, R.buffer], 'stems', (label, progress) => setJob(jobId, { label, progress }));
     await api.saveWav(key + '-voz', r.vocals, 44100);
     await api.saveWav(key + '-musica', r.inst, 44100);
@@ -55,7 +59,7 @@ export async function isolateVoice(clipId, keep = 'voice') {
   if (c.type === 'video' && !media.hasAudio) return toast('Este video no tiene audio'), null;
   if (c.reverse) return toast('Quita «Invertir» antes de separar la voz'), null;
   let stems;
-  try { stems = await stemsOf(media); } catch (e) { toast('No se pudo separar la voz: ' + e.message, 'error'); return null; }
+  try { stems = await stemsOf(media); } catch (e) { toast(e.message === 'Cancelado' ? 'Separación cancelada' : 'No se pudo separar la voz: ' + e.message, e.message === 'Cancelado' ? 'info' : 'error'); return null; }
   const want = keep === 'both' ? ['voice', 'music'] : [keep];
   const added = await importPaths(want.map((k) => stems[k]));
   const label = { voice: 'voz', music: 'música' }, ids = [];
@@ -174,8 +178,13 @@ export async function neuralTTS(text, lang = 'spa') {
   const jobId = uid();
   setJob(jobId, { label: 'Cargando voz neuronal…', progress: null });
   try {
-    const r = await workerTask({ task: 'tts', text, lang }, [], 'speech', (label, progress) => setJob(jobId, { label, progress }));
-    const path = await api.saveWav('tts-neural-' + uid(), [r.audio], r.rate);
+    // Same text and language → same cached WAV (no model run).
+    const key = 'tts-neural-' + hash(lang + '|' + text.trim());
+    let path = await api.cachePath(key);
+    if (!(await api.fileExists(path))) {
+      const r = await workerTask({ task: 'tts', text, lang }, [], 'speech', (label, progress) => setJob(jobId, { label, progress }));
+      path = await api.saveWav(key, [r.audio], r.rate);
+    }
     const [m] = await importPaths([path]);
     const name = `Voz neuronal · ${text.trim().slice(0, 24)}`;
     update((d) => { d.media.find((x) => x.id === m.id).name = name; });

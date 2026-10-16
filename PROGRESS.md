@@ -153,6 +153,8 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - `arnndn=m=...` con ruta de Windows exige escapar `:` y `\` en el filtergraph: se corre ffmpeg con `cwd` = carpeta de modelos y `m=cb.rnnn`.
 - `SourcePool._park` podía recibir un id ya descartado como "el más viejo" en la misma pasada (pageerror con más de 10 clips de audio): se ignora.
 - ffmpeg sube mono → estéreo a −3 dB (`aformat`), es normal en el export.
+- Verificación Sesión 3 (app empaquetada con `--user-data-dir` vacío): MDX, `cb.rnnn`, MMS, opus-mt y Whisper se descargan bien sin dev. Separar 4 min de audio: ~73 s, ~1.5 GB en total entre procesos, estable durante todo el proceso (ponytail: todo el audio en memoria; para pistas de más de ~30 min habría que procesar por trozos). Se puede cancelar desde la barra de tareas (✕): se mata el worker y los modelos se recargan desde la caché del navegador.
+- El TTS neuronal guarda el WAV por hash de idioma + texto: si repites el texto, se reutiliza sin correr el modelo.
 
 ## Notas
 - La primera vez que se usan subtítulos se descarga el modelo de voz (75–500 MB). Después funciona sin internet.

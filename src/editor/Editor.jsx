@@ -108,6 +108,7 @@ export default function Editor() {
             <div className="jobs" title={jobList.map(([, j]) => j.label).join('\n')}>
               <span className="spinner" />
               <span>{jobList[0][1].label}{jobList[0][1].progress != null ? ` ${Math.round(jobList[0][1].progress * 100)}%` : ''}</span>
+              {jobList[0][1].cancel && <button className="job-cancel" title="Cancelar" onClick={jobList[0][1].cancel}>✕</button>}
             </div>
           )}
           <IconBtn icon="keyboard" title="Atajos de teclado" onClick={() => setHelp(true)} />
