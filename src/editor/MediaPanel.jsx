@@ -6,6 +6,7 @@ import { Icon, IconBtn, Select, Slider, Toggle } from '../ui.jsx';
 import { importDialog, importPaths, addToTimeline, addText, addSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
+import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 
 const TABS = [
@@ -95,6 +96,8 @@ function AudioTab() {
   const [voice, setVoice] = useState('');
   const [rate, setRate] = useState(0);
   const [text, setText] = useState('');
+  const [engine, setEngine] = useState('windows');
+  const [nlang, setNlang] = useState('spa');
   const [rec, setRec] = useState(null);
   const [secs, setSecs] = useState(0);
   useEffect(() => { window.api.ttsVoices().then((v) => { setVoices(v); const es = v.find((x) => x.culture.startsWith('es')); setVoice((es || v[0] || {}).name || ''); }); }, []);
@@ -131,11 +134,17 @@ function AudioTab() {
         : <button className="btn wide" onClick={startRec}><Icon name="mic" size={16} /> Grabar desde el cursor</button>}
       <h5>Texto a voz</h5>
       <textarea rows={3} placeholder="Escribe lo que quieres que diga la voz…" value={text} onChange={(e) => setText(e.target.value)} />
+      <Select value={engine} options={{ windows: 'Voces de Windows', neural: 'Voz neuronal (IA, offline)' }} onChange={setEngine} />
+      {engine === 'neural' ? <>
+        <Select value={nlang} options={NEURAL_LANGS} onChange={setNlang} />
+        <button className="btn wide tts-neural" disabled={!text.trim()} onClick={() => neuralTTS(text, nlang)}><Icon name="wand" size={16} /> Generar voz neuronal</button>
+      </> : <>
       {voices.length > 0
         ? <Select value={voice} options={Object.fromEntries(voices.map((v) => [v.name, `${v.name.replace('Microsoft ', '')} (${v.culture})`]))} onChange={setVoice} />
         : <p className="hint">No hay voces del sistema instaladas. Agrégalas en Configuración de Windows › Hora e idioma › Voz.</p>}
       <Slider label="Velocidad" value={rate} min={-10} max={10} onChange={setRate} reset={0} />
       <button className="btn wide" disabled={!text.trim()} onClick={() => addTTS(text, voice, rate)}><Icon name="wand" size={16} /> Generar voz</button>
+      </>}
       {media.length > 0 && <h5>Audio del proyecto</h5>}
       <div className="audio-list">
         {media.map((m) => (

@@ -15,8 +15,8 @@ const DEV = !!process.env.VITE_DEV;
 const DATA = app.getPath('userData');
 const PROJECTS = path.join(DATA, 'projects');
 const CACHE = path.join(DATA, 'cache');
-fs.mkdirSync(PROJECTS, { recursive: true });
-fs.mkdirSync(CACHE, { recursive: true });
+const MODELS = path.join(DATA, 'models');
+for (const d of [PROJECTS, CACHE, MODELS]) fs.mkdirSync(d, { recursive: true });
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },
@@ -108,9 +108,9 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => app.quit());
 
 // ---------- helpers ----------
-function run(bin, args, { onStderr } = {}) {
+function run(bin, args, { onStderr, cwd } = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(bin, args, { windowsHide: true });
+    const p = spawn(bin, args, { windowsHide: true, cwd });
     const out = []; let err = '';
     p.stdout.on('data', (d) => out.push(d));
     p.stderr.on('data', (d) => { err += d; if (err.length > 20000) err = err.slice(-10000); onStderr && onStderr(String(d)); });
@@ -247,6 +247,58 @@ ipcMain.handle('media:frame', async (_e, file, t) => {
   return out;
 });
 
+// ---------- AI model files (downloaded once, then offline) ----------
+const MODEL_FILES = {
+  // MDX-Net vocal model from Ultimate Vocal Remover (MIT).
+  mdx: ['UVR-MDX-NET-Voc_FT.onnx', 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR-MDX-NET-Voc_FT.onnx'],
+  // RNNoise model for ffmpeg arnndn (speech denoise, "conjoined burgers").
+  rnnoise: ['cb.rnnn', 'https://raw.githubusercontent.com/GregorR/rnnoise-models/master/conjoined-burgers-2018-08-28/cb.rnnn'],
+};
+const downloads = new Map();
+function getModel(name, jobId) {
+  const [file, url] = MODEL_FILES[name];
+  const out = path.join(MODELS, file);
+  if (!downloads.has(name)) {
+    downloads.set(name, (async () => {
+      if (await exists(out)) return out;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`No se pudo descargar el modelo (${res.status})`);
+      const total = +res.headers.get('content-length') || 0, part = out + '.part';
+      const ws = fs.createWriteStream(part);
+      let got = 0;
+      for await (const chunk of res.body) {
+        got += chunk.length;
+        if (!ws.write(chunk)) await new Promise((r) => ws.once('drain', r));
+        if (jobId && total) send('job:progress', { jobId, progress: got / total });
+      }
+      await new Promise((r, j) => ws.end((e) => (e ? j(e) : r())));
+      await fsp.rename(part, out);
+      return out;
+    })().finally(() => downloads.delete(name)));
+  }
+  return downloads.get(name);
+}
+ipcMain.handle('models:get', (_e, name, jobId) => getModel(name, jobId));
+
+// Whole file as float32 PCM (interleaved), for the separation model and beat detection.
+ipcMain.handle('audio:decode', async (_e, file, rate, channels) => {
+  const raw = await run(FFMPEG, ['-v', 'error', '-i', file, '-vn', '-ac', String(channels), '-ar', String(rate), '-f', 'f32le', '-']);
+  return new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+});
+// Float32 channels → 16-bit WAV in the cache (stems, neural TTS).
+ipcMain.handle('audio:saveWav', async (_e, name, chans, rate) => {
+  const n = chans[0].length, ch = chans.length, buf = Buffer.alloc(44 + n * ch * 2);
+  buf.write('RIFF', 0); buf.writeUInt32LE(36 + n * ch * 2, 4); buf.write('WAVEfmt ', 8);
+  buf.writeUInt32LE(16, 16); buf.writeUInt16LE(1, 20); buf.writeUInt16LE(ch, 22); buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * ch * 2, 28); buf.writeUInt16LE(ch * 2, 32); buf.writeUInt16LE(16, 34); buf.write('data', 36); buf.writeUInt32LE(n * ch * 2, 40);
+  const views = chans.map((c) => new Float32Array(c.buffer, c.byteOffset, n));
+  for (let i = 0, o = 44; i < n; i++) for (let c = 0; c < ch; c++, o += 2) buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, views[c][i])) * 32767), o);
+  const out = path.join(CACHE, `${String(name).replace(/[^\w-]/g, '')}.wav`);
+  await fsp.writeFile(out, buf);
+  return out;
+});
+ipcMain.handle('cache:path', (_e, name) => path.join(CACHE, `${String(name).replace(/[^\w-]/g, '')}.wav`));
+
 // ---------- audio effects ----------
 const VOICES = {
   none: [],
@@ -264,6 +316,9 @@ const VOICES = {
 };
 function fxChain(fx) {
   const f = [];
+  // "Mejorar voz": rumble cut, RNNoise, less mud, more presence, gentle compression (studio-like, offline).
+  if (fx.enhance) f.push('highpass=f=80', 'arnndn=m=cb.rnnn', 'equalizer=f=250:t=q:w=1:g=-3', 'equalizer=f=3500:t=q:w=1.2:g=4',
+    'acompressor=threshold=-22dB:ratio=3.5:attack=8:release=150:makeup=4', 'alimiter=limit=0.95');
   if (fx.denoise) f.push('afftdn=nf=-25');
   if (fx.pitch) f.push(`rubberband=pitch=${Math.pow(2, fx.pitch / 12).toFixed(4)}`);
   f.push(...(VOICES[fx.voice] || []));
@@ -278,7 +333,9 @@ ipcMain.handle('audio:fx', async (_e, file, fx) => {
   if (!chain.length) return null;
   const out = path.join(CACHE, `fx-${hash(file + JSON.stringify(fx))}.wav`);
   if (!(await exists(out))) {
-    await run(FFMPEG, ['-y', '-i', file, '-vn', '-af', chain.join(','), '-ar', '48000', '-ac', '2', out + '.part.wav']);
+    if (fx.enhance) await getModel('rnnoise');
+    // cwd = models folder so arnndn's model path needs no filtergraph escaping.
+    await run(FFMPEG, ['-y', '-i', file, '-vn', '-af', chain.join(','), '-ar', '48000', '-ac', '2', out + '.part.wav'], { cwd: MODELS });
     await fsp.rename(out + '.part.wav', out);
   }
   return out;
@@ -360,7 +417,19 @@ function audioGraph(segs, total, firstInput) {
     parts.push(`${src}${f.join(',')}[a${i}]`);
   });
   if (!segs.length) return { inputs: ['-f', 'lavfi', '-t', String(total), '-i', 'anullsrc=r=48000:cl=stereo'], filter: `[${firstInput}:a]anull[aout]` };
-  const mix = segs.map((_, i) => `[a${i}]`).join('') + `amix=inputs=${segs.length}:normalize=0:duration=longest,apad,atrim=0:${total.toFixed(4)}[aout]`;
+  const end = `apad,atrim=0:${total.toFixed(4)}`;
+  const mixOf = (ids, out) => (ids.length === 1 ? `[a${ids[0]}]${end}[${out}]` : ids.map((i) => `[a${i}]`).join('') + `amix=inputs=${ids.length}:normalize=0:duration=longest,${end}[${out}]`);
+  const ducked = segs.map((s, i) => (s.duck > 0 ? i : -1)).filter((i) => i >= 0), voice = segs.map((s, i) => (s.duck > 0 ? -1 : i)).filter((i) => i >= 0);
+  if (!ducked.length || !voice.length) return { inputs, filter: parts.join(';') + ';' + mixOf(segs.map((_, i) => i), 'aout') };
+  // Ducking: every ducked clip goes through a sidechain compressor keyed by the mix of the other clips.
+  // Sidechain boosted (+24 dB) so speech compresses the clip to near silence; the dry/wet mix then sets the depth
+  // (≈ the chosen dB while someone talks). ponytail: broadband ducking, per-band if music still masks voice.
+  parts.push(mixOf(voice, 'vmix'), `[vmix]asplit=${ducked.length + 1}[vout]${ducked.map((i) => `[k${i}]`).join('')}`);
+  for (const i of ducked) {
+    const wet = 1 - Math.pow(10, -segs[i].duck / 20);
+    parts.push(`[a${i}][k${i}]sidechaincompress=threshold=0.05:ratio=20:level_sc=16:attack=20:release=400:mix=${wet.toFixed(3)}[d${i}]`);
+  }
+  const mix = `[vout]${ducked.map((i) => `[d${i}]`).join('')}amix=inputs=${ducked.length + 1}:normalize=0:duration=longest,${end}[aout]`;
   return { inputs, filter: parts.join(';') + ';' + mix };
 }
 

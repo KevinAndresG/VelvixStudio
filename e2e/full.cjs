@@ -10,7 +10,7 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   const page = await app.firstWindow();
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
+  page.on('pageerror', (e) => errors.push('pageerror: ' + e.message + ' @ ' + String(e.stack).split(String.fromCharCode(10)).slice(1, 3).join(' ')));
   await page.waitForSelector('.new-card');
   await page.click('.new-card');
   await page.waitForSelector('.editor');
@@ -359,6 +359,94 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   const lit = (t) => { const raw = cp.execFileSync(FF, ['-v', 'error', '-ss', String(t), '-i', OUT5, '-frames:v', '1', '-vf', 'scale=192:108', '-f', 'rawvideo', '-pix_fmt', 'gray', '-']); let n = 0, s = 0; for (const v of raw) if (v > 20) { n++; s += v; } return [+(n / raw.length).toFixed(3), n ? Math.round(s / n) : 0]; };
   const mk = OUT5.endsWith('.mp4') ? [0.1, 1, 1.9].map(lit) : [];
   check('#3 export con imagen: keyframes de máscara y filtro', mk.length === 3 && mk[0][0] < mk[1][0] && mk[1][0] < mk[2][0] && mk[0][1] < mk[1][1] && mk[1][1] < mk[2][1], mk.length ? mk.map((x) => x.join('/')).join(' → ') : OUT5);
+
+  // ---------- Sesión 3: audio con IA ----------
+  // Generated test audio (e2e/gen): voice + synthetic music, noisy voice, 120 BPM click track, 50 Hz bed.
+  const FF3 = require(APP + '/node_modules/ffmpeg-static'), cp3 = require('child_process'), GEN = path.join(S, 'gen');
+  require('fs').mkdirSync(GEN, { recursive: true });
+  const VOZ = path.join(S, 'media', 'voz.wav'), MUS = "0.12*sin(2*PI*110*t)+0.08*sin(2*PI*165*t)+0.06*sin(2*PI*220*t)+0.05*sin(2*PI*330*t)*(0.5+0.5*sin(2*PI*2*t))";
+  const gen = (name, ...args) => { const f = path.join(GEN, name); cp3.execFileSync(FF3, ['-y', '-v', 'error', ...args, '-ar', '44100', f]); return f; };
+  const musica = gen('musica.wav', '-f', 'lavfi', '-i', `aevalsrc=${MUS}:s=44100:d=11`, '-ac', '2');
+  const mezcla = gen('mezcla.wav', '-i', VOZ, '-i', musica, '-filter_complex', '[0:a]aformat=sample_rates=44100:channel_layouts=stereo[v];[v][1:a]amix=inputs=2:normalize=0:duration=longest', '-ac', '2');
+  const ruido = gen('voz-ruido.wav', '-i', VOZ, '-f', 'lavfi', '-i', 'anoisesrc=c=white:a=0.02:d=11:r=44100', '-filter_complex', '[0:a]aformat=sample_rates=44100:channel_layouts=mono[v];[v][1:a]amix=inputs=2:normalize=0:duration=first', '-ac', '1');
+  const beat = gen('beat120.wav', '-f', 'lavfi', '-i', "aevalsrc='if(lt(mod(t-0.25,0.5),0.03),0.8*sin(2*PI*1000*t),0)':s=44100:d=8");
+  const bed = gen('bed50.wav', '-f', 'lavfi', '-i', 'sine=f=50:d=11:r=44100,volume=0.5');
+  const pcm = (f, ss, t) => { const raw = cp3.execFileSync(FF3, ['-v', 'error', '-ss', String(ss), '-t', String(t), '-i', f, '-ac', '1', '-ar', '16000', '-f', 'f32le', '-']); return new Float32Array(raw.buffer, raw.byteOffset, raw.length / 4); };
+  const corr = (a, b) => { const n = Math.min(a.length, b.length); let ab = 0, aa = 0, bb = 0; for (let i = 0; i < n; i++) { ab += a[i] * b[i]; aa += a[i] * a[i]; bb += b[i] * b[i]; } return ab / Math.sqrt(aa * bb || 1); };
+  const rmsDb = (f, ss, t, af = 'anull') => +(/mean_volume: (-?[\d.]+)/.exec(cp3.spawnSync(FF3, ['-ss', String(ss), '-t', String(t), '-i', f, '-vn', '-af', af + ',volumedetect', '-f', 'null', '-']).stderr.toString()) || [0, -999])[1];
+
+  const s3 = await page.evaluate(async (files) => {
+    const { actions: A, store, audioai: AI, sources: SR } = window.__velvix;
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); });
+    const [mix, noisy, beat, bed, voz] = await A.importPaths(files);
+    const o = {};
+    // #15 isolate the voice of the mixed clip: two stems replace the original clip.
+    const id = A.addToTimeline(mix, { at: 0 });
+    const t0 = performance.now();
+    const ids = await AI.isolateVoice(id, 'both');
+    o.secs = Math.round((performance.now() - t0) / 100) / 10;
+    const p = store.getState().project;
+    o.stems = (ids || []).map((x) => { const c = p.clips.find((k) => k.id === x); return { name: c.name, path: p.media.find((m) => m.id === c.mediaId).path, start: c.start, dur: c.duration }; });
+    o.origGone = !p.clips.some((c) => c.id === id);
+    // #16 Mejorar voz: rendered through the same audio:fx path the inspector uses.
+    o.enhanced = await window.api.audioFx(noisy.path, { voice: 'none', pitch: 0, denoise: false, normalize: false, bass: 0, treble: 0, enhance: true });
+    // #5a beats on a 120 BPM click track (clicks at 0.25 + k·0.5 s).
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); });
+    const b = A.addToTimeline(beat, { at: 0 });
+    o.beats = await AI.detectBeats(b);
+    o.markers = store.getState().project.markers.filter((m) => m.beat).length;
+    // Cut to the beat: two 3 s images on the main track end on beats.
+    const img = store.getState().project.media.find((m) => m.type === 'image') || (await A.importPaths([files[5]]))[0];
+    A.addToTimeline(img); A.addToTimeline(img);
+    store.update((d) => { const m = d.tracks.find((t) => t.main); d.clips.filter((c) => c.trackId === m.id).forEach((c, i) => { c.duration = 2.9; c.start = i * 2.9; }); });
+    o.cut = AI.cutToBeat(2);
+    const main = store.getState().project.clips.filter((c) => store.getState().project.tracks.find((t) => t.id === c.trackId).main).sort((x, y) => x.start - y.start);
+    o.mainEnds = main.map((c) => +(c.start + c.duration).toFixed(3));
+    o.beatSet = store.getState().project.markers.filter((m) => m.beat).map((m) => m.t).sort((x, y) => x - y).filter((_, i) => i % 2 === 0);
+    // #19 ducking: 50 Hz bed ducked by 15 dB under voz.wav.
+    store.update((d) => { d.clips = []; d.markers = []; d.tracks = d.tracks.filter((t) => t.main); });
+    A.addToTimeline(img); store.update((d) => { d.clips[0].duration = 11; });
+    const bg = A.addToTimeline(bed, { at: 0 }), v = A.addToTimeline(voz, { at: 0 });
+    store.update((d) => { d.clips.find((c) => c.id === bg).duck = 15; });
+    o.duckSeg = SR.audioSegments(store.getState().project).map((s) => s.duck).join(',');
+    for (let i = 0; i < 50 && !(SR.duckEnvelope(store.getState().project)[75] > 0); i++) await new Promise((r) => setTimeout(r, 100)); // peaks load async
+    const pj = store.getState().project, bc = pj.clips.find((c) => c.id === bg);
+    o.gain = [1.5, 6.6].map((t) => +SR.duckGain(pj, bc, t).toFixed(3));
+    return o;
+  }, [mezcla, ruido, beat, bed, VOZ, path.join(S, 'media', 'gray.png')]);
+  console.log(JSON.stringify(s3, null, 1));
+  const stem = Object.fromEntries((s3.stems || []).map((x) => [/voz/.test(x.name) ? 'voz' : 'musica', x.path]));
+  const sep = stem.voz ? { vv: corr(pcm(stem.voz, 0, 11), pcm(VOZ, 0, 11)), vm: corr(pcm(stem.voz, 0, 11), pcm(musica, 0, 11)), mm: corr(pcm(stem.musica, 0, 11), pcm(musica, 0, 11)), mv: corr(pcm(stem.musica, 0, 11), pcm(VOZ, 0, 11)) } : {};
+  check('#15 aislar voz: dos pistas (voz y música) en lugar del clip', s3.stems.length === 2 && s3.origGone && s3.stems.every((x) => x.start === 0 && Math.abs(x.dur - 11) < 0.05), s3.stems.map((x) => x.name).join(', ') + ` (${s3.secs} s)`);
+  check('#15 la pista de voz es la voz y la de música es la música', sep.vv > 0.8 && sep.mm > 0.8 && sep.vm < 0.3 && sep.mv < 0.3, JSON.stringify(Object.fromEntries(Object.entries(sep).map(([k, x]) => [k, +x.toFixed(3)]))));
+  const nz = [rmsDb(ruido, 2.65, 0.6), rmsDb(s3.enhanced, 2.65, 0.6), rmsDb(ruido, 0.3, 2), rmsDb(s3.enhanced, 0.3, 2)];
+  check('#16 mejorar voz: quita el ruido en las pausas y conserva la voz', nz[1] < nz[0] - 15 && nz[3] > nz[2] - 6, `pausa ${nz[0]} → ${nz[1]} dB, voz ${nz[2]} → ${nz[3]} dB`);
+  const offBeat = s3.beats.map((t) => Math.abs(((t - 0.25) / 0.5) - Math.round((t - 0.25) / 0.5)) * 0.5);
+  check('#5a detectar ritmo: un marcador por beat (120 BPM)', s3.beats.length >= 14 && s3.beats.length <= 16 && s3.markers === s3.beats.length && Math.max(...offBeat) < 0.03, `${s3.beats.length} beats, error máx ${(Math.max(...offBeat) * 1000).toFixed(0)} ms`);
+  check('#5a cortar al compás: los cortes caen en beats', s3.cut === 2 && s3.mainEnds.every((e) => s3.beatSet.some((b) => Math.abs(b - e) < 1e-3)), s3.mainEnds.join(', '));
+  check('#19 ducking en preview: baja la música mientras hay voz', s3.duckSeg.includes('15') && s3.gain[0] < 0.25 && s3.gain[1] > 0.85, s3.gain.join(' / '));
+  const OUT6 = await exportTo('out-duck.mp4');
+  const low = 'bandpass=f=50:width_type=h:w=6,bandpass=f=50:width_type=h:w=6'; // only the bed (the voice has rumble/DC below 70 Hz)
+  const dk = OUT6.endsWith('.mp4') ? [rmsDb(OUT6, 1.0, 1.2, low), rmsDb(OUT6, 6.35, 0.3, low)] : [];
+  check('#19 ducking en export (sidechaincompress)', dk.length === 2 && dk[0] < dk[1] - 8, dk.length ? `con voz ${dk[0]} dB, sin voz ${dk[1]} dB` : OUT6);
+  // #5a through the inspector's "Ritmo" section.
+  await page.evaluate((f) => { const { actions: A, store } = window.__velvix; store.update((d) => { d.markers = []; }); const id = A.addToTimeline(store.getState().project.media.find((x) => x.path === f), { at: 0 }); store.setState({ selection: [id] }); }, beat);
+  await page.click('.tabs button:has-text("Audio")').catch(() => {});
+  await page.click('.beat-detect');
+  await page.waitForFunction(() => document.querySelectorAll('.marker.beat').length > 0, null, { timeout: 30000 }).catch(() => {});
+  const ui3 = await page.evaluate(() => ({ dom: document.querySelectorAll('.marker.beat').length, btn: document.querySelector('.beat-detect').innerText.trim() }));
+  check('#5a detectar ritmo desde el inspector', ui3.dom >= 14 && /\(1[4-6] beats\)/.test(ui3.btn), JSON.stringify(ui3));
+  // #9b neural TTS from the audio panel (MMS-TTS, downloads once).
+  await page.click('.left-tabs button[title="Audio"]');
+  await page.fill('.panel textarea', 'Hola, esto es una voz neuronal.');
+  await page.selectOption('.panel select >> nth=0', 'neural');
+  const nBefore = await page.evaluate(() => window.__velvix.store.getState().project.clips.length);
+  await page.click('.tts-neural');
+  const tts = await page.waitForFunction((n) => { const p = window.__velvix.store.getState().project; return p.clips.length > n && p.clips[p.clips.length - 1]; }, nBefore, { timeout: 180000 }).then((h) => h.jsonValue()).catch(() => null);
+  const ttsPath = tts && await page.evaluate((c) => window.__velvix.store.getState().project.media.find((m) => m.id === c.mediaId).path, tts);
+  const ttsDb = ttsPath ? rmsDb(ttsPath, 0, 1.5) : -999;
+  check('#9b voz neuronal offline (MMS-TTS)', tts && tts.type === 'audio' && tts.duration > 1 && ttsDb > -35, tts ? `${tts.duration.toFixed(2)} s, ${ttsDb} dB` : 'sin clip');
+  await page.screenshot({ path: S + '/09-audio-ai.png' });
 
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');

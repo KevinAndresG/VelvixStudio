@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('api', {
   ttsVoices: inv('tts:voices'),
   tts: inv('tts:speak'),
   captionsAudio: inv('captions:audio'),
+  getModel: inv('models:get'),
+  decodeAudio: inv('audio:decode'),
+  saveWav: inv('audio:saveWav'),
+  cachePath: inv('cache:path'),
   onJobProgress: on('job:progress'),
 
   exportHw: inv('export:hw'),

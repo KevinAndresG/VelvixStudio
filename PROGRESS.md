@@ -32,6 +32,7 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Exportación:** MP4 H.264 (codificación GPU vía WebCodecs, ~50 fps a 1080p), WebM VP9, GIF, MP3, WAV; 480p–4K; 24–60 fps; 3 calidades; progreso, ETA, cancelar; guardar fotograma como PNG.
 **Transcripción (v1.1):** panel "Transcripción" (`TranscriptPanel.jsx` + `transcript.js`): borrar palabras corta ese tramo en todas las pistas con ripple; muletillas (eh, um, este…) y pausas detectadas por RMS del audio mezclado (umbral dB + pausa mínima) con lista previa marcable; subtítulos dinámicos (`wordAnim` pop/rebote/deslizar/aparecer sincronizado con cada palabra, `keyword` color en palabras clave, emojis automáticos, 5 presets nuevos ✦); buscar y reemplazar; vocabulario propio (difuso + «mal = Bien») aplicado tras transcribir; traducción local opus-mt en el worker de Whisper (pivote por inglés, ~80 MB por par).
 **Velocidad y keyframes (v1.2):** curvas de velocidad (`clip.curve`, puntos lineales normalizados por su media: `clip.speed` = velocidad media, la duración no cambia) con 5 presets (montaje, héroe, bala, destello entrada/salida) + editor de curva; `sourceTime`/`srcOffset`/`speedAt` en `model.js` mueven preview, export y audio (export: tramos de velocidad constante estirados por separado con contexto y unidos con crossfade); dividir y recortar bordes conservan el mapeo exacto (`subClip`); velocidad hasta 100× (sobre 16× el preview busca cuadro a cuadro). Keyframes genéricos por clave (`x`, `volume`, `filter.contrast`, `mask.feather`…: `propAt`, `groupAt`, `setProp`) para filtros, volumen (export: expresión de ganancia en ffmpeg) y máscara; easing por keyframe (Suave, Lineal, Acelerar, Frenar, Rebote o cubic-bezier propio) con editor de curva en el inspector.
+**Audio con IA (v1.3):** `audioai.js` + worker de Whisper. **Aislar voz / quitar música** con MDX-Net (UVR Voc_FT ONNX, ~67 MB, descargado una vez por `main.cjs` a `%APPDATA%/Velvix Studio/models`): STFT/iSTFT propios (`engine/fft.js` FFT mixto 2·3·4·5 para n_fft 7680, `engine/mdx.js` igual que UVR), WebGPU con respaldo WASM; genera WAV de voz y de música (caché por archivo) y los pone en pistas nuevas (aislar voz / quitar voz / separar en 2 pistas). **Mejorar voz** (`audioFx.enhance`): pasa-altos, RNNoise `arnndn` (modelo `cb.rnnn` descargado), EQ y compresor. **Ducking automático** (`clip.duck` en dB): export con `sidechaincompress` por clip, preview con envolvente de voz desde los picos (`duckEnvelope`/`duckGain` en `sources.js`). **Detección de ritmo**: flujo espectral + autocorrelación + seguimiento de beats por programación dinámica → marcadores verdes; **cortar al compás** acorta los clips de la pista principal para que terminen en un beat (cada 1/2/4). **Voz neuronal offline**: MMS-TTS (VITS, transformers.js) en es/en/pt/fr/de.
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
 ## Plan por sesiones ⏳
@@ -58,13 +59,13 @@ Base común: el motor de keyframes de `model.js` (`kfValue`, `transformAt`) y el
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 2 completa siguiendo las reglas de toda sesión.`
 
-### Sesión 3 — Audio con IA
+### Sesión 3 — Audio con IA ✅ (v1.3.0)
 Base común: modelos ONNX en worker (igual que Whisper) + cadena de audio de ffmpeg en `main.cjs`.
-- [ ] #15 A — **Aislar voz / quitar música** (Demucs/MDX ONNX → WAV de voz y WAV instrumental).
-- [ ] #16 A — **Mejorar voz** (voz de estudio con IA; versión ligera con `arnndn` + EQ + compresor).
-- [ ] #19 B — **Ducking automático**: bajar la música cuando hay voz (`sidechaincompress` en export, automatización de volumen en preview).
-- [ ] #5a B — **Detección de ritmo**: marcadores en cada beat + "cortar al compás".
-- [ ] #9b C — **Voces TTS neuronales offline** (Piper ONNX) además de las de Windows.
+- [x] ✅ #15 A — **Aislar voz / quitar música** (MDX-Net ONNX → WAV de voz y WAV instrumental).
+- [x] ✅ #16 A — **Mejorar voz** (versión ligera con `arnndn` + EQ + compresor).
+- [x] ✅ #19 B — **Ducking automático**: bajar la música cuando hay voz (`sidechaincompress` en export, automatización de volumen en preview).
+- [x] ✅ #5a B — **Detección de ritmo**: marcadores en cada beat + "cortar al compás".
+- [x] ✅ #9b C — **Voces TTS neuronales offline** (MMS-TTS en lugar de Piper: Piper necesita el fonemizador espeak-ng, GPL y sin build JS en las dependencias).
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 3 completa siguiendo las reglas de toda sesión.`
 
@@ -106,7 +107,7 @@ Base común: catálogos de `model.js`, `drawText` en `render.js`, panel izquierd
 Al final, cuando las features estén listas.
 - [ ] #11 B — **Interfaz en inglés** (i18n, selector de idioma) + **actualizaciones automáticas** (electron-updater).
 - [ ] Revisar la marca "Velvix Studio" en el registro de marcas (WIPO / oficina local) antes de publicar.
-- [ ] Licencias: cambiar a build LGPL de ffmpeg si se va a vender; pantalla "Acerca de" con licencias de terceros.
+- [ ] Licencias: cambiar a build LGPL de ffmpeg si se va a vender; pantalla "Acerca de" con licencias de terceros. **Ojo:** las voces MMS-TTS (#9b) son CC-BY-NC 4.0 (no comercial): cambiarlas antes de vender (p. ej. Piper con voces de licencia libre). Revisar también la licencia de los modelos RNNoise (`cb.rnnn`) y UVR.
 - [ ] #1 — **Firma de código** (requiere comprar certificado OV/EV; quita el aviso de SmartScreen). Es un trámite, no código.
 
 > Prompt: `Lee PROGRESS.md y haz la Sesión 8 completa siguiendo las reglas de toda sesión.`
@@ -123,6 +124,7 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 ## Pruebas E2E (correr tras cada cambio)
 - `npx vite build` y luego `node e2e/full.cjs` → todas las features + exportación real a `e2e/out.mp4` (verificar con ffprobe: 330 frames, 11.0 s video y audio).
 - `full.cjs` también verifica las Sesiones 1 y 2 (líneas `OK`/`FAIL`, sale con código 1 si algo falla) y exporta `out-cut.mp4`, `out-speed.mp4` (curvas + keyframes de volumen), `out-ramp.mp4` y `out-mask.mp4`. `media/ramp.mp4` lleva el número de cuadro en la luma (izquierda = n mod 20, derecha = n / 20, valor 12·k+8) y un chirp de 300 Hz + 60 Hz/s: el tono da el tiempo de origen del audio. La traducción descarga opus-mt la primera vez.
+- La Sesión 3 genera audio de prueba en `e2e/gen/` (voz + música sintética, voz con ruido, clic a 120 BPM, base de 50 Hz) y exporta `out-duck.mp4`. Descarga una vez el modelo MDX (~67 MB), `cb.rnnn` y MMS-TTS español.
 - `node e2e/cap.cjs` → subtítulos automáticos. `node e2e/smoke.cjs` → capturas rápidas.
 - `PKG=1 node e2e/full.cjs` → lo mismo contra la app empaquetada (`npm run dist` antes).
 - Medios de prueba en `e2e/media/`.
@@ -144,6 +146,13 @@ Fuentes: [eesel.ai](https://www.eesel.ai/en/blog/capcut-alternatives), [Unstar](
 - `<img>` sin `crossOrigin='anonymous'` ensucia el canvas y la exportación WebCodecs falla con "VideoFrames can't be created from tainted sources".
 - El video exportado dura `ceil(duración·fps)/fps`: con duraciones no alineadas a cuadros difiere hasta 1 cuadro del timeline.
 - Protocolo `app://` necesita MIME `.mjs` → `text/javascript` (lo pide onnxruntime para Whisper).
+
+- **MDX-Net**: entrada `[1, 4, 3072, 256]` = (L real, L imag, R real, R imag) × bins × cuadros; STFT `center=True` con relleno por reflexión y ventana Hann periódica (como `torch.stft`), n_fft 7680, hop 1024; cada trozo descarta n_fft/2 por lado. n_fft no es potencia de 2: por eso la FFT de radix mixto.
+- **Ducking**: `sidechaincompress` solo no baja lo suficiente (el habla tiene huecos y el compresor tiene rodilla); con `level_sc=16` el clip queda casi en silencio mientras hay voz y `mix` fija la profundidad (≈ los dB elegidos).
+- Para medir la música bajo la voz en pruebas usar un pasa-banda: `voz.wav` tiene retumbe/DC bajo 70 Hz que contamina un pasa-bajos.
+- `arnndn=m=...` con ruta de Windows exige escapar `:` y `\` en el filtergraph: se corre ffmpeg con `cwd` = carpeta de modelos y `m=cb.rnnn`.
+- `SourcePool._park` podía recibir un id ya descartado como "el más viejo" en la misma pasada (pageerror con más de 10 clips de audio): se ignora.
+- ffmpeg sube mono → estéreo a −3 dB (`aformat`), es normal en el export.
 
 ## Notas
 - La primera vez que se usan subtítulos se descarga el modelo de voz (75–500 MB). Después funciona sin internet.

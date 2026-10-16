@@ -8,6 +8,7 @@ import {
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
 import { presetStyle } from './MediaPanel.jsx';
+import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
 function useEditor(clip) {
@@ -387,12 +388,14 @@ function AudioTab({ clip, edit, media }) {
     const next = { ...fx, [k]: v };
     edit((c) => { c.audioFx = { ...c.audioFx, [k]: v }; });
     const src = (clip.reverse && media.reversed) || media.proxy || media.path;
-    const active = next.voice !== 'none' || next.pitch || next.denoise || next.normalize || next.bass || next.treble;
+    const active = next.voice !== 'none' || next.pitch || next.denoise || next.normalize || next.bass || next.treble || next.enhance;
     try {
       const fxPath = active ? await window.api.audioFx(src, next) : null;
       patchSilently((p) => { const c = p.clips.find((x) => x.id === clip.id); if (c) c.fxPath = fxPath; });
     } catch (e) { toast('No se pudo aplicar el efecto: ' + e.message, 'error'); }
   };
+  const [every, setEvery] = useState('1');
+  const beats = useStore((s) => (s.project.markers || []).filter((m) => m.beat && m.clip === clip.id).length);
   return (
     <>
       <Section title="Volumen">
@@ -401,6 +404,23 @@ function AudioTab({ clip, edit, media }) {
         <Slider label="Fundido de entrada" value={clip.fadeIn} min={0} max={Math.min(10, clip.duration)} step={0.1} unit="s" onChange={(v) => edit((c) => { c.fadeIn = v; }, 'fin')} reset={0} />
         <Slider label="Fundido de salida" value={clip.fadeOut} min={0} max={Math.min(10, clip.duration)} step={0.1} unit="s" onChange={(v) => edit((c) => { c.fadeOut = v; }, 'fout')} reset={0} />
         {clip.type === 'video' && !clip.detached && <button className="btn wide" onClick={detachAudio}><Icon name="music" size={15} /> Separar audio del video</button>}
+      </Section>
+      <Section title="Voz con IA">
+        <Toggle label="Mejorar voz (sonido de estudio)" value={!!fx.enhance} onChange={(v) => setFx('enhance', v)} />
+        <div className="voice-grid stems">
+          <button data-stem="voice" onClick={() => isolateVoice(clip.id, 'voice')}>Aislar voz</button>
+          <button data-stem="music" onClick={() => isolateVoice(clip.id, 'music')}>Quitar voz</button>
+          <button data-stem="both" onClick={() => isolateVoice(clip.id, 'both')}>Separar en 2 pistas</button>
+        </div>
+      </Section>
+      <Section title="Ducking automático">
+        <Toggle label="Bajar este audio cuando hay voz" value={clip.duck > 0} onChange={(v) => edit((c) => { c.duck = v ? 12 : 0; })} />
+        {clip.duck > 0 && <Slider label="Cuánto bajar" value={clip.duck} min={3} max={30} unit="dB" onChange={(v) => edit((c) => { c.duck = v; }, 'duck')} reset={12} />}
+      </Section>
+      <Section title="Ritmo">
+        <button className="btn wide beat-detect" onClick={() => detectBeats(clip.id)}><Icon name="music" size={15} /> Detectar ritmo{beats ? ` (${beats} beats)` : ''}</button>
+        <Select label="Cortar cada" value={every} options={{ 1: '1 beat', 2: '2 beats', 4: '4 beats (compás)' }} onChange={setEvery} />
+        <button className="btn wide beat-cut" disabled={!beats} onClick={() => cutToBeat(+every)}>Cortar al compás</button>
       </Section>
       <Section title="Cambiador de voz">
         <div className="voice-grid">

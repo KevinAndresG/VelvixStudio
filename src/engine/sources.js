@@ -1,5 +1,5 @@
 // Media element pool: keeps <video>/<audio>/<img> per clip in sync with the timeline clock.
-import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf } from './model.js';
+import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf, projectDuration } from './model.js';
 import { activeVisual } from './render.js';
 import { FrameReader } from './decoder.js';
 
@@ -22,6 +22,33 @@ export function fadeGain(clip, t) {
   if (clip.fadeOut > 0 && local > clip.duration - clip.fadeOut) g *= clamp((clip.duration - local) / clip.fadeOut, 0, 1);
   return g;
 }
+
+// Ducking preview: voice activity of the clips that aren't ducked (waveform peaks, 50/s), held like the
+// export's sidechain compressor (instant attack, 0.4 s release). Export uses ffmpeg sidechaincompress.
+const peakCache = new Map();
+function peaksOf(path) {
+  if (!peakCache.has(path)) { peakCache.set(path, null); window.api.peaks(path).then((p) => peakCache.set(path, p), () => {}); }
+  return peakCache.get(path);
+}
+let duckCache = { project: null, loaded: -1, env: null };
+export function duckEnvelope(project) {
+  const voices = project.clips.filter((c) => (c.type === 'audio' || (c.type === 'video' && !c.detached)) && !c.duck && !c.muted && !(trackOf(project, c) || {}).muted);
+  const pk = voices.map((c) => { const m = mediaOf(project, c); return m && (m.type === 'audio' || m.hasAudio) ? peaksOf(m.path) : null; });
+  const loaded = pk.filter(Boolean).length;
+  if (duckCache.project === project && duckCache.loaded === loaded) return duckCache.env;
+  const n = Math.ceil(projectDuration(project) * 50) + 1, env = new Float32Array(n), keep = Math.exp(-1 / (0.4 * 50));
+  voices.forEach((c, k) => {
+    if (!pk[k]) return;
+    for (let i = Math.floor(c.start * 50); i < Math.min(n, Math.ceil(clipEnd(c) * 50)); i++) {
+      const t = i / 50;
+      if (t >= c.start && (pk[k][Math.floor(sourceTime(c, t, null) * 50)] || 0) * volumeAt(c, t) > 0.03) env[i] = 1;
+    }
+  });
+  for (let i = 1; i < n; i++) env[i] = Math.max(env[i], env[i - 1] * keep);
+  duckCache = { project, loaded, env };
+  return env;
+}
+export const duckGain = (project, clip, t) => (clip.duck > 0 ? 1 - (1 - Math.pow(10, -clip.duck / 20)) * (duckEnvelope(project)[Math.floor(t * 50)] || 0) : 1);
 
 function seekTo(el, time) {
   return new Promise((resolve) => {
@@ -118,7 +145,7 @@ export class SourcePool {
       const ownsAudio = !c.detached && !c.fxPath;
       const tk = trackOf(project, c);
       const active = !it.upcoming && t >= c.start && t < clipEnd(c);
-      const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) : 0;
+      const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) * duckGain(project, c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
       this._drive(e.el, want, speedAt(c, t), playing && !it.upcoming);
     }
@@ -132,7 +159,7 @@ export class SourcePool {
       const e = this._el(this.audios, c, audioPath(c, media), 'audio');
       const active = t >= c.start;
       const tk = trackOf(project, c);
-      const vol = active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) : 0;
+      const vol = active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) * duckGain(project, c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
       const want = clamp(sourceTime(c, Math.max(t, c.start), media), 0, media.duration);
       this._drive(e.el, want, speedAt(c, t), playing && active);
@@ -161,6 +188,7 @@ export class SourcePool {
   // Keep a few idle elements warm for quick scrubbing back; drop the oldest.
   _park(map, id) {
     const e = map.get(id);
+    if (!e) return; // already dropped as the oldest by an earlier _park in the same sync
     if (!e.el.paused) e.el.pause();
     if (e.gain) e.gain.gain.value = 0;
     if (map.size > 10) {
@@ -210,7 +238,7 @@ export function audioSegments(project, range = null) {
     if (!media || (tk && tk.muted) || (c.type === 'video' && !media.hasAudio && !c.fxPath)) continue;
     const path = audioPath(c, media);
     const srcIn = c.reverse && media.reversed ? media.duration - (c.in + c.duration * c.speed) : c.in;
-    const seg = { path, in: Math.max(0, srcIn), srcDur: c.duration * c.speed, start: c.start, duration: c.duration, speed: c.speed, volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 };
+    const seg = { id: c.id, duck: c.duck || 0, path, in: Math.max(0, srcIn), srcDur: c.duration * c.speed, start: c.start, duration: c.duration, speed: c.speed, volume: c.volume, fadeIn: c.fadeIn || 0, fadeOut: c.fadeOut || 0 };
     if (c.curve && c.curve.length > 1) {
       // ponytail: variable speed as n constant-speed pieces with exact boundaries; finer n if pitch steps are audible.
       const n = clamp(Math.ceil(c.duration / 0.1), 4, 80), rev = c.reverse && media.reversed ? media : null, d = c.duration / n;

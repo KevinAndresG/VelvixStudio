@@ -1,5 +1,7 @@
 // Speech-to-text off the UI thread. Model files download once from Hugging Face and stay cached.
 import { pipeline, env } from '@huggingface/transformers';
+import * as ort from 'onnxruntime-web';
+import { separate, MDX } from '../engine/mdx.js';
 
 env.allowLocalModels = false;
 env.backends.onnx.wasm.wasmPaths = new URL('../../ort/', self.location.href.replace(/assets\/.*$/, '')).href;
@@ -51,8 +53,47 @@ async function translate({ texts, src, tgt }) {
   self.postMessage({ type: 'translated', texts: cur });
 }
 
+// Vocal separation with MDX-Net (model file downloaded by the main process, served over the media server).
+let mdx = null, mdxUrl = null;
+async function stems({ L, R, url }) {
+  if (!mdx || mdxUrl !== url) {
+    self.postMessage({ type: 'status', msg: 'Cargando modelo de separación…', progress: null });
+    const gpu = !!(await navigator.gpu?.requestAdapter?.());
+    mdx = await ort.InferenceSession.create(url, { executionProviders: gpu ? ['webgpu', 'wasm'] : ['wasm'] });
+    mdxUrl = url;
+  }
+  const run = async (spec) => (await mdx.run({ [mdx.inputNames[0]]: new ort.Tensor('float32', spec, [1, 4, MDX.dimF, MDX.dimT]) }))[mdx.outputNames[0]].data;
+  const r = await separate(L, R, run, (p) => self.postMessage({ type: 'status', msg: 'Separando voz y música…', progress: p }));
+  const bufs = [...r.vocals, ...r.inst].map((a) => a.buffer);
+  self.postMessage({ type: 'stems', vocals: r.vocals, inst: r.inst }, bufs);
+}
+
+// Neural text to speech (MMS-TTS / VITS, character based: no phonemizer needed).
+const voices = new Map();
+async function speak({ text, lang }) {
+  const m = 'Xenova/mms-tts-' + lang;
+  if (!voices.has(m)) {
+    const files = {};
+    voices.set(m, await pipeline('text-to-speech', m, {
+      dtype: 'q8', device: 'wasm',
+      progress_callback: (e) => {
+        if (e.status !== 'progress' || !e.total) return;
+        files[e.file] = [e.loaded, e.total];
+        const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
+        self.postMessage({ type: 'download', progress: l / t });
+      },
+    }));
+  }
+  self.postMessage({ type: 'status', msg: 'Generando voz…', progress: null });
+  const out = await voices.get(m)(text);
+  self.postMessage({ type: 'speech', audio: out.audio, rate: out.sampling_rate }, [out.audio.buffer]);
+}
+
 self.onmessage = async ({ data }) => {
-  if (data.task === 'translate') return translate(data).catch((e) => self.postMessage({ type: 'error', msg: String(e && e.message || e) }));
+  const fail = (e) => self.postMessage({ type: 'error', msg: String(e && e.message || e) });
+  if (data.task === 'stems') return stems(data).catch(fail);
+  if (data.task === 'tts') return speak(data).catch(fail);
+  if (data.task === 'translate') return translate(data).catch(fail);
   const { audio, model, language } = data;
   try {
     const files = {};

@@ -42,7 +42,7 @@ export const DEFAULT_TEXT = {
   wordAnim: 'none', // per-word entrance timed to speech: pop | bounce | slide | fade
   maxWidth: 0.85,
 };
-export const DEFAULT_AUDIO_FX = { voice: 'none', pitch: 0, denoise: false, normalize: false, bass: 0, treble: 0 };
+export const DEFAULT_AUDIO_FX = { voice: 'none', pitch: 0, denoise: false, normalize: false, bass: 0, treble: 0, enhance: false };
 
 export function newClip(type, props = {}) {
   const base = {

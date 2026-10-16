@@ -335,6 +335,7 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .playhead i { position: absolute; top: 0; left: -7px; width: 14px; height: 18px; background: #fff; clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); pointer-events: auto; cursor: ew-resize; }
 .snap-line { position: absolute; top: 26px; bottom: 0; width: 1px; background: var(--yellow); z-index: 5; pointer-events: none; }
 .marker { position: absolute; top: 14px; width: 10px; height: 12px; margin-left: -5px; background: var(--yellow); clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); z-index: 4; cursor: pointer; }
+.marker.beat { background: #4ee6a8; width: 6px; margin-left: -3px; }
 .tl-empty { position: absolute; left: 20px; color: var(--tx3); pointer-events: none; padding: 20px 0; }
 .new-track-hint { position: absolute; left: 0; right: 0; height: 3px; background: var(--acc); }
 .ctx-menu { position: fixed; z-index: 60; background: #22242e; border: 1px solid var(--line2); border-radius: 9px; padding: 5px; min-width: 200px; box-shadow: 0 12px 40px rgba(0,0,0,.55); display: flex; flex-direction: column; }

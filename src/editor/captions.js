@@ -63,10 +63,10 @@ export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
 }
 
 let worker = null;
-const getWorker = () => (worker = worker || new Worker(new URL('./whisper.worker.js', import.meta.url), { type: 'module' }));
+export const getWorker = () => (worker = worker || new Worker(new URL('./whisper.worker.js', import.meta.url), { type: 'module' }));
 // One job at a time: transcription and translation share the worker's onmessage.
 let queue = Promise.resolve();
-const exclusive = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
+export const exclusive = (fn) => { const run = queue.then(fn, fn); queue = run.catch(() => {}); return run; };
 
 // Speech → project.transcript.words (timeline seconds), with the user vocabulary applied.
 export function transcribe({ model, language }) {

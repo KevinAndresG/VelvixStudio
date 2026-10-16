@@ -385,7 +385,7 @@ export default function Timeline() {
               {drag && (drag.trackId === 'above' || drag.trackId === 'below') && <div className="new-track-hint" style={{ top: drag.trackId === 'above' ? 0 : totalH }} />}
             </div>
             {(project.markers || []).map((m) => (
-              <span key={m.id} className="marker" style={{ left: m.t * zoom }} title="Marcador (clic derecho para quitar)"
+              <span key={m.id} className={`marker${m.beat ? " beat" : ""}`} style={{ left: m.t * zoom }} title={m.beat ? "Beat (clic derecho para quitar)" : "Marcador (clic derecho para quitar)"}
                 onClick={() => setState({ time: m.t })}
                 onContextMenu={(e) => { e.preventDefault(); update((p) => { p.markers = p.markers.filter((x) => x.id !== m.id); }); }} />
             ))}
