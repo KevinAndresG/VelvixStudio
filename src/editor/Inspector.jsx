@@ -3,13 +3,14 @@ import { useStore, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
   DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
-  KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed,
+  KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed, trackOf, vidSrc,
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
 import { presetStyle } from './MediaPanel.jsx';
 import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
 import ColorTab from './ColorTab.jsx';
+import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
 function useEditor(clip) {
@@ -65,7 +66,7 @@ function ClipPanel({ clip, project, count }) {
   const visual = clip.type === 'video' || clip.type === 'image';
   const tabs = {};
   if (clip.type === 'text') Object.assign(tabs, { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
-  if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', anim: 'Animación', speed: 'Velocidad' });
+  if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', ai: 'IA', anim: 'Animación', speed: 'Velocidad' });
   if (clip.type === 'video' && media && (media.hasAudio || clip.fxPath)) tabs.audio = 'Audio';
   if (clip.type === 'audio') Object.assign(tabs, { audio: 'Audio', speed: 'Velocidad' });
   if (clip.type === 'effect') tabs.effect = clip.filter ? 'Filtro' : 'Efecto';
@@ -87,6 +88,7 @@ function ClipPanel({ clip, project, count }) {
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
         {cur === 'adjust' && <AdjustTab clip={clip} edit={edit} />}
         {cur === 'color' && <ColorTab clip={clip} edit={edit} />}
+        {cur === 'ai' && <AiTab clip={clip} edit={edit} media={media} project={project} />}
         {cur === 'anim' && <AnimTab clip={clip} edit={edit} />}
         {cur === 'speed' && <SpeedTab clip={clip} media={media} />}
         {cur === 'audio' && <AudioTab clip={clip} edit={edit} media={media} />}
@@ -184,6 +186,13 @@ function BasicTab({ clip, edit, project, visual }) {
           <button className="btn sm" onClick={() => edit((c) => { c.transform = { ...c.transform, x: 0, y: 0, scale: 1, rotation: 0, opacity: 1 }; for (const k of KF_PROPS) delete c.kf[k]; })}>Restablecer</button>
         </div>
       </Section>
+      {(clip.type === 'text' || (visual && trackOf(project, clip) && !trackOf(project, clip).main)) && (
+        <Section title="Seguimiento de movimiento">
+          <button className="btn wide ai-track" onClick={() => trackObject(clip.id)}><Icon name="wand" size={15} /> {clip.tracked ? 'Volver a seguir' : 'Seguir objeto'}</button>
+          {clip.tracked && <button className="btn wide" onClick={() => untrack(clip.id)}>Quitar seguimiento</button>}
+          <p className="hint">Pon el {clip.type === 'text' ? (clip.sticker ? 'sticker' : 'texto') : 'clip'} encima del objeto, coloca el cursor en ese momento y pulsa «Seguir objeto»: se mueve con él en el video de abajo.</p>
+        </Section>
+      )}
       {visual && (
         <>
           <Section title="Encuadre">
@@ -206,6 +215,50 @@ function BasicTab({ clip, edit, project, visual }) {
           <ChromaSection clip={clip} edit={edit} />
         </>
       )}
+    </>
+  );
+}
+
+// Visual AI for one clip: background removal, face reframing, stabilization, scenes, upscaling.
+function AiTab({ clip, edit, media, project }) {
+  const [level, setLevel] = useState((clip.alt && clip.alt.stab && clip.alt.stab.level) || 'med');
+  const [thr, setThr] = useState(10);
+  if (!media) return null;
+  const video = clip.type === 'video', v = video ? vidSrc(clip, media) : null, alt = v && v.alt ? clip.alt : null;
+  const m = clip.matte, mValid = m && m.src === (video ? v.path : media.path);
+  const hd = Math.min(media.width, media.height) >= 1080;
+  return (
+    <>
+      <Section title="Quitar fondo">
+        {mValid ? <>
+          <Toggle label="Fondo quitado" value={m.on} onChange={(x) => edit((c) => { c.matte.on = x; })} />
+          <Slider label="Suavidad del borde" value={m.edge ?? 60} min={0} max={100} onChange={(x) => edit((c) => { c.matte.edge = x; }, 'medge')} reset={60} />
+        </> : <button className="btn primary wide ai-bg" onClick={() => removeBackground(clip.id)}><Icon name="wand" size={15} /> {m ? 'Volver a quitar el fondo' : 'Quitar fondo con IA'}</button>}
+        <p className="hint">{m && !mValid ? 'El video cambió (invertido, estabilizado o mejorado): vuelve a calcularlo. ' : ''}Separa a la persona del fondo sin pantalla verde; debajo se ve el fondo del lienzo u otra pista.</p>
+      </Section>
+      <Section title="Reencuadre">
+        <button className="btn wide ai-face" onClick={() => reframeClip(clip.id)}><Icon name="smile" size={15} /> Seguir la cara ({project.aspect})</button>
+        <p className="hint">Llena el formato y mueve el encuadre para que la cara quede al centro. Para pasar todo el proyecto a 9:16 usa IA › Reencuadre automático (panel izquierdo).</p>
+      </Section>
+      {video && (
+        <Section title="Estabilizar">
+          <Select value={level} options={Object.fromEntries(Object.entries(STAB_LEVELS).map(([k, x]) => [k, x[0]]))} onChange={setLevel} />
+          <button className="btn wide ai-stab" onClick={() => stabilizeClip(clip.id, level)}><Icon name="magnet" size={15} /> {alt && alt.stab ? 'Volver a estabilizar' : 'Estabilizar'}</button>
+          {alt && alt.stab && <button className="btn wide" onClick={() => unstabilize(clip.id)}>Quitar estabilización ({STAB_LEVELS[alt.stab.level][0].toLowerCase()})</button>}
+        </Section>
+      )}
+      {video && (
+        <Section title="Escenas" defaultOpen={false}>
+          <Slider label="Umbral (menos = más sensible)" value={thr} min={3} max={40} onChange={setThr} reset={10} />
+          <button className="btn wide ai-scenes-clip" onClick={() => splitScenes(clip.id, thr)}><Icon name="split" size={15} /> Detectar escenas y dividir</button>
+        </Section>
+      )}
+      <Section title="Mejorar resolución">
+        <dl className="info"><dt>Resolución</dt><dd>{alt && alt.up ? `${alt.up.w}×${alt.up.h} (mejorado)` : `${media.width}×${media.height}`}</dd></dl>
+        {!(alt && alt.up) && <button className="btn wide ai-up" disabled={hd} onClick={() => upscaleClip(clip.id)}><Icon name="zoomIn" size={15} /> {hd ? 'Ya está en alta resolución' : `Mejorar a ${media.width * 2}×${media.height * 2} con IA`}</button>}
+        {alt && <button className="btn wide ai-reset" onClick={() => resetVideo(clip.id)}>Restablecer el video original</button>}
+        <p className="hint">Duplica la resolución con Real-ESRGAN (local). En video tarda: procesa cuadro a cuadro.</p>
+      </Section>
     </>
   );
 }

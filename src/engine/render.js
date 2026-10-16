@@ -1,6 +1,6 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
-import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword } from './model.js';
-import { grade, needsGrade } from './gl.js';
+import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword, sourceTime, vidSrc, matteOn } from './model.js';
+import { grade, needsGrade, matteFrame } from './gl.js';
 
 // ---------- scratch canvases ----------
 const pool = new Map();
@@ -115,13 +115,16 @@ function maskPath(x, m, dw, dh) {
   }
 }
 
+// Size the (cropped) source is drawn at before the clip's scale: fit / fill / stretch.
+export function fitSize(fit, cw, ch, W, H) {
+  if (fit === 'stretch') return [W, H];
+  const k = fit === 'fill' ? Math.max(W / cw, H / ch) : Math.min(W / cw, H / ch);
+  return [cw * k, ch * k];
+}
 function drawMedia(x, clip, el, sw, sh, W, H, tr, st, crop) {
   const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
   if (cw <= 0 || ch <= 0) return null;
-  let dw, dh;
-  if (clip.fit === 'fill') { const k = Math.max(W / cw, H / ch); dw = cw * k; dh = ch * k; }
-  else if (clip.fit === 'stretch') { dw = W; dh = H; }
-  else { const k = Math.min(W / cw, H / ch); dw = cw * k; dh = ch * k; }
+  const [dw, dh] = fitSize(clip.fit, cw, ch, W, H);
   x.translate(W / 2 + (tr.x + st.dx) * W, H / 2 + (tr.y + st.dy) * H);
   x.rotate(((tr.rotation + st.rot) * Math.PI) / 180);
   const s = tr.scale * st.scale;
@@ -140,12 +143,15 @@ export function drawVisual(ctx, clip, t, drawable, W, H, opts = {}) {
   let { el, w: sw, h: sh } = drawable;
   const f = effectiveFilter(groupAt(clip, 'filter', t));
   let crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
-  if (needsGrade(f, clip.chroma)) {
+  // Background removal: matte frame of the source time shown (in the file the clip plays, see vidSrc).
+  const media = opts.media, m = matteOn(clip, media) ? clip.matte : null;
+  const matte = m && matteFrame(m, clip.type === 'image' ? 0 : (sourceTime(clip, clamp(t, clip.start, clipEnd(clip) - 1e-4), media) - vidSrc(clip, media).off - m.t0) * m.fps);
+  if (needsGrade(f, clip.chroma, matte)) {
     // Graded at the size it will be drawn (capped at the source size), then drawn like the source.
     const cw = sw * (1 - crop.l - crop.r), ch = sh * (1 - crop.t - crop.b);
     if (cw <= 0 || ch <= 0) return;
     const k = Math.min(1, Math.max(W / cw, H / ch) * Math.max(1, Math.abs(tr.scale * st.scale)));
-    ({ el, w: sw, h: sh, crop } = grade(el, sw, sh, crop, f, clip.chroma, cw * k, ch * k, Math.floor(t * 24)));
+    ({ el, w: sw, h: sh, crop } = grade(el, sw, sh, crop, f, clip.chroma, cw * k, ch * k, Math.floor(t * 24), matte));
   }
   const css = blurCss((f ? f.blur : 0) + st.blur, W);
   const mask = clip.mask && clip.mask.type !== 'none' ? groupAt(clip, 'mask', t) : null;
@@ -345,12 +351,26 @@ export function textBounds(ctx, clip, t, W, H) {
 export function visualBounds(clip, t, drawable, W, H) {
   if (!drawable) return null;
   const tr = transformAt(clip, t), crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
-  const cw = drawable.w * (1 - crop.l - crop.r), ch = drawable.h * (1 - crop.t - crop.b);
-  let dw, dh;
-  if (clip.fit === 'fill') { const k = Math.max(W / cw, H / ch); dw = cw * k; dh = ch * k; }
-  else if (clip.fit === 'stretch') { dw = W; dh = H; }
-  else { const k = Math.min(W / cw, H / ch); dw = cw * k; dh = ch * k; }
+  const [dw, dh] = fitSize(clip.fit, drawable.w * (1 - crop.l - crop.r), drawable.h * (1 - crop.t - crop.b), W, H);
   return { cx: W / 2 + tr.x * W, cy: H / 2 + tr.y * H, w: dw * tr.scale, h: dh * tr.scale, rotation: tr.rotation };
+}
+
+// Point (u, v in 0..1 of the whole source frame, sw×sh) ↔ canvas pixels, placed as drawMedia does at time t
+// (transform keyframes included, in/out animations not). Used by face reframing and motion tracking.
+function placement(clip, t, sw, sh, W, H) {
+  const tr = transformAt(clip, t), crop = clip.crop || { l: 0, t: 0, r: 0, b: 0 };
+  const cw = 1 - crop.l - crop.r, ch = 1 - crop.t - crop.b, [dw, dh] = fitSize(clip.fit, sw * cw, sh * ch, W, H), a = (tr.rotation * Math.PI) / 180;
+  return { tr, crop, cw, ch, dw, dh, sx: tr.scale * (tr.flipH ? -1 : 1), sy: tr.scale * (tr.flipV ? -1 : 1), cos: Math.cos(a), sin: Math.sin(a) };
+}
+export function srcToCanvas(clip, t, sw, sh, W, H, u, v) {
+  const p = placement(clip, t, sw, sh, W, H);
+  const x = ((u - p.crop.l) / p.cw - 0.5) * p.dw * p.sx, y = ((v - p.crop.t) / p.ch - 0.5) * p.dh * p.sy;
+  return [W / 2 + p.tr.x * W + x * p.cos - y * p.sin, H / 2 + p.tr.y * H + x * p.sin + y * p.cos];
+}
+export function canvasToSrc(clip, t, sw, sh, W, H, X, Y) {
+  const p = placement(clip, t, sw, sh, W, H), dx = X - W / 2 - p.tr.x * W, dy = Y - H / 2 - p.tr.y * H;
+  const x = (dx * p.cos + dy * p.sin) / p.sx, y = (-dx * p.sin + dy * p.cos) / p.sy;
+  return [p.crop.l + (x / p.dw + 0.5) * p.cw, p.crop.t + (y / p.dh + 0.5) * p.ch];
 }
 
 // ---------- transitions ----------
@@ -586,15 +606,15 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       const p = clamp((t - (cut - half)) / tr.duration, 0, 1);
       const dA = getDrawable(A, mediaOf(project, A)), dB = getDrawable(B, mediaOf(project, B));
       bgFor(A, p < 0.5 ? dA : dB);
-      const la = cloneLayer(drawVisual(ctx, A, t, dA, W, H, { layer: true, layerKey: 'tA' }), 'tA2', W, H);
-      const lb = drawVisual(ctx, B, t, dB, W, H, { layer: true, layerKey: 'tB' });
+      const la = cloneLayer(drawVisual(ctx, A, t, dA, W, H, { layer: true, layerKey: 'tA', media: mediaOf(project, A) }), 'tA2', W, H);
+      const lb = drawVisual(ctx, B, t, dB, W, H, { layer: true, layerKey: 'tB', media: mediaOf(project, B) });
       drawTransition(ctx, tr.type, p, la, lb, W, H);
       done.add(A.id); done.add(B.id);
       continue;
     }
     if (t < c.start || t >= clipEnd(c)) continue;
     bgFor(c, d);
-    drawVisual(ctx, c, t, d, W, H);
+    drawVisual(ctx, c, t, d, W, H, { media });
   }
 }
 function cloneLayer(c, key, W, H) {

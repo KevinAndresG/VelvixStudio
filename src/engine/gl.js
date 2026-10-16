@@ -11,13 +11,14 @@ void main() { uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }`;
 const FS = `#version 300 es
 precision highp float; precision highp sampler3D;
 in vec2 uv; out vec4 o;
-uniform sampler2D src, curves; uniform sampler3D lut;
+uniform sampler2D src, curves, matte; uniform sampler3D lut;
 uniform vec4 crop; uniform vec2 px, res;
 uniform float bright, contrast, sat, hue, sepia, invert, temp, tint, fade, vignette, grain, seed, sharpen, skin, lutMix, lutN;
 uniform vec3 lift, gamma, gain;
 uniform vec3 hsl[8];
 uniform bool useCurves, useLut, useHsl, useChroma, useWheels;
 uniform vec4 chroma; uniform bool spill;
+uniform bool useMatte; uniform vec2 matteEdge;
 
 vec4 tap(vec2 d) { return texture(src, crop.xy + (vec2(uv.x, 1.0 - uv.y) + d) * crop.zw); }
 float h3(vec3 p) { p = fract(p * 0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
@@ -44,6 +45,8 @@ void main() {
     if (d < chroma.z) a = 0.0;
     else if (d < chroma.z + chroma.w) { a *= (d - chroma.z) / chroma.w; if (spill) c.g = min(c.g, (c.r + c.b) * 0.5 + 0.078); }
   }
+  // Background removal: the person matte (full source frame, same coordinates as the source) becomes alpha.
+  if (useMatte) a *= smoothstep(matteEdge.x, matteEdge.y, texture(matte, crop.xy + vec2(uv.x, 1.0 - uv.y) * crop.zw).r);
   if (skin > 0.0) {
     // Bilateral blur (edge-preserving) blended in only where the pixel looks like skin (YCbCr range).
     float r = skin * 8.0 * min(res.x, res.y) / 1080.0;
@@ -111,13 +114,13 @@ void main() {
   o = vec4(c * a, a);
 }`;
 
-let gl = null, prog, U = {}, tex = {}, size = [0, 0], curveKey = '', lutPath = '';
+let gl = null, prog, U = {}, tex = {}, size = [0, 0], curveKey = '', lutPath = '', matteKey = '';
 
 function init() {
   const canvas = document.createElement('canvas');
   gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false, depth: false, stencil: false });
   if (!gl) throw new Error('WebGL2 no disponible');
-  canvas.addEventListener('webglcontextlost', () => { gl = null; size = [0, 0]; curveKey = lutPath = ''; }); // GPU reset: next frame makes a new context
+  canvas.addEventListener('webglcontextlost', () => { gl = null; size = [0, 0]; curveKey = lutPath = matteKey = ''; }); // GPU reset: next frame makes a new context
   const sh = (type, src) => {
     const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
     if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
@@ -140,8 +143,8 @@ function init() {
     gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     return t;
   };
-  tex.src = mk(0, gl.TEXTURE_2D); tex.curves = mk(1, gl.TEXTURE_2D); tex.lut = mk(2, gl.TEXTURE_3D);
-  gl.uniform1i(U.src, 0); gl.uniform1i(U.curves, 1); gl.uniform1i(U.lut, 2);
+  tex.src = mk(0, gl.TEXTURE_2D); tex.curves = mk(1, gl.TEXTURE_2D); tex.lut = mk(2, gl.TEXTURE_3D); tex.matte = mk(3, gl.TEXTURE_2D);
+  gl.uniform1i(U.src, 0); gl.uniform1i(U.curves, 1); gl.uniform1i(U.lut, 2); gl.uniform1i(U.matte, 3);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
 }
 
@@ -210,6 +213,27 @@ export const lutState = (path) => { const l = luts.get(path); return l === undef
 // Export waits for every LUT so no frame is rendered without its grade.
 export const preloadLuts = (project) => Promise.all(project.clips.filter((c) => c.filter && c.filter.lut).map((c) => loadLut(c.filter.lut)));
 
+// ---------- person mattes (background removal) ----------
+// File = n frames of w×h bytes back to back (clip.matte has the layout). Loaded whole; export waits for them.
+const mattes = new Map(); // path → Uint8Array | Promise | null
+export function loadMatte(path) {
+  if (!mattes.has(path)) {
+    mattes.set(path, fetch(window.api.mediaBase + encodeURIComponent(path)).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+      .then((b) => { const a = new Uint8Array(b); mattes.set(path, a); return a; }, () => { mattes.set(path, null); return null; }));
+  }
+  const v = mattes.get(path);
+  return v instanceof Promise ? v : Promise.resolve(v);
+}
+// Frame i of a matte (null while it loads: the preview draws the clip whole until then).
+export function matteFrame(m, i) {
+  if (!mattes.has(m.path)) loadMatte(m.path);
+  const a = mattes.get(m.path);
+  if (!a || a instanceof Promise) return null;
+  const k = clamp(Math.round(i), 0, m.n - 1), sz = m.w * m.h;
+  return { key: m.path + '#' + k, data: a.subarray(k * sz, (k + 1) * sz), w: m.w, h: m.h, edge: m.edge };
+}
+export const preloadMattes = (project) => Promise.all(project.clips.filter((c) => c.matte && c.matte.on).map((c) => loadMatte(c.matte.path)));
+
 // ---------- grading ----------
 // Wheel puck (x, y in −100…100) → RGB offset that keeps luma (hue angle around the color circle).
 function wheel(x, y) {
@@ -221,9 +245,9 @@ export const hasHsl = (h) => !!h && HSL_KEYS.some((k) => h[k] && h[k].some((v) =
 const WHEEL_KEYS = ['liftX', 'liftY', 'lift', 'gammaX', 'gammaY', 'gamma', 'gainX', 'gainY', 'gain'];
 
 // True when the filter or chroma needs the shader (anything but blur, which canvas 2D still does).
-export function needsGrade(f, ck) {
+export function needsGrade(f, ck, matte) {
   if (f && f.lut && !luts.has(f.lut)) loadLut(f.lut); // preview: drawn without it until it loads
-  if (ck && ck.on) return true;
+  if ((ck && ck.on) || matte) return true;
   if (!f) return false;
   for (const k of ['exposure', 'brightness', 'contrast', 'saturation', 'temperature', 'tint', 'hue', 'fade', 'vignette', 'grain', 'sharpen', 'sepia', 'invert', 'skin', ...WHEEL_KEYS]) if (f[k]) return true;
   const l = f.lut && luts.get(f.lut);
@@ -232,7 +256,8 @@ export function needsGrade(f, ck) {
 
 // Grades the crop of `el` into a w×h image. Returns { el, w, h, crop } to draw with drawImage (the shared
 // WebGL canvas never shrinks, so the result is its bottom-left w×h region).
-export function grade(el, sw, sh, crop, f, ck, w, h, seed = 0) {
+// matte: one frame of a person matte { key, data, w, h, edge } (background removal) or null.
+export function grade(el, sw, sh, crop, f, ck, w, h, seed = 0, matte = null) {
   if (!gl) init();
   w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
   const cv = gl.canvas;
@@ -291,6 +316,14 @@ export function grade(el, sw, sh, crop, f, ck, w, h, seed = 0) {
     const v = parseInt(ck.color.slice(1, 7), 16), r = ((v >> 16) & 255) / 255, g = ((v >> 8) & 255) / 255, b = (v & 255) / 255;
     gl.uniform4f(U.chroma, -0.1687 * r - 0.3313 * g + 0.5 * b, 0.5 * r - 0.4187 * g - 0.0813 * b, (ck.similarity / 100) * 1.2, Math.max(1 / 255, ck.smooth / 100));
     gl.uniform1i(U.spill, g > r && g > b);
+  }
+  gl.uniform1i(U.useMatte, !!matte);
+  if (matte) {
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, tex.matte);
+    if (matte.key !== matteKey) { matteKey = matte.key; gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, matte.w, matte.h, 0, gl.RED, gl.UNSIGNED_BYTE, matte.data); }
+    // edge 0 = hard cut at 50 %, 100 = the model's soft matte as is.
+    const e = clamp((matte.edge ?? 60) / 100, 0, 1) * 0.5;
+    gl.uniform2f(U.matteEdge, 0.5 - e, 0.5 + e + 1e-3);
   }
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   return { el: cv, w: size[0], h: size[1], crop: { l: 0, t: (size[1] - h) / size[1], r: (size[0] - w) / size[0], b: 0 } };

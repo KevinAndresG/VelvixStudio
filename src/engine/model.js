@@ -139,6 +139,25 @@ export function sourceTime(clip, t, media) {
   return clip.in + off;
 }
 
+// Inverse of sourceTime: timeline time at which the clip shows source second `s` (monotonic, bisection).
+export function timeAtSource(clip, s, media) {
+  let lo = clip.start, hi = clipEnd(clip);
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (sourceTime(clip, m, media) < s) lo = m; else hi = m; }
+  return (lo + hi) / 2;
+}
+
+// ---------- processed video (Sesión 6) ----------
+// clip.alt = { base, t0, dur, up, stab, path }: stabilized and/or upscaled copy of a range of the clip's source,
+// starting at source second t0. It replaces the picture (never the audio) while `base` is still the file the
+// clip plays (reversing or relinking makes it stale and the original is used again).
+export const basePath = (clip, media) => (clip.reverse && media.reversed) || media.proxy || media.path;
+export function vidSrc(clip, media) {
+  const base = basePath(clip, media), a = clip.alt;
+  return a && a.path && a.base === base ? { path: a.path, off: a.t0, dur: a.dur, alt: true } : { path: base, off: 0, dur: media.duration, alt: false };
+}
+// Person matte (clip.matte, from the background removal model) usable for the picture the clip plays now.
+export const matteOn = (clip, media) => !!(clip.matte && clip.matte.on && media && clip.matte.src === (clip.type === 'image' ? media.path : vidSrc(clip, media).path));
+
 // ---------- keyframes ----------
 // Keys: transform props ('x', 'scale'…), 'volume', or 'group.prop' ('filter.contrast', 'mask.feather').
 export const KF_PROPS = ['x', 'y', 'scale', 'rotation', 'opacity'];

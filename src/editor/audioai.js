@@ -13,7 +13,7 @@ const hash = (s) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ 
 
 let cancelCurrent = null;
 export const cancelAI = () => cancelCurrent && cancelCurrent();
-function workerTask(msg, transfer, doneType, onProgress) {
+export function workerTask(msg, transfer, doneType, onProgress = () => {}) {
   return exclusive(() => new Promise((resolve, reject) => {
     cancelCurrent = () => { resetWorker(); reject(new Error('Cancelado')); };
     const w = getWorker();

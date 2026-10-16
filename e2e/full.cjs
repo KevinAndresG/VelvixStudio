@@ -659,6 +659,15 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   }
   if (v5.status !== 0 && !fails.length) fails.push(`verify5 terminó con código ${v5.status} ${(v5.stderr || '').slice(-300)}`);
 
+  // ---------- Sesión 6: IA visual y análisis de video ----------
+  const n6 = fails.length;
+  const v6 = cp3.spawnSync(process.execPath, [path.join(__dirname, 'verify6.cjs')], { env: process.env, encoding: 'utf8', timeout: 2400000 });
+  for (const line of (v6.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('verify6 ' + line);
+  }
+  if (v6.status !== 0 && fails.length === n6) fails.push(`verify6 terminó con código ${v6.status} ${(v6.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);

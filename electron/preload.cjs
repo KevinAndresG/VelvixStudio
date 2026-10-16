@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('api', {
   readFile: inv('file:read'),
   openFile: inv('dialog:openFile'),
   fileExists: inv('file:exists'),
+  fileTag: inv('file:tag'),
   paths: inv('app:paths'),
   pathForFile: (f) => webUtils.getPathForFile(f),
 
@@ -47,6 +48,15 @@ contextBridge.exposeInMainWorld('api', {
   decodeAudio: inv('audio:decode'),
   saveWav: inv('audio:saveWav'),
   cachePath: inv('cache:path'),
+  cacheFile: inv('cache:file'),
+  framesOpen: inv('frames:open'),
+  framesRead: inv('frames:read'),
+  framesClose: inv('frames:close'),
+  encOpen: inv('enc:open'),
+  encWrite: inv('enc:write'),
+  encClose: inv('enc:close'),
+  stabilize: inv('video:stabilize'),
+  scenes: inv('video:scenes'),
   onJobProgress: on('job:progress'),
 
   exportHw: inv('export:hw'),

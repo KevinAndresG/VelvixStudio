@@ -151,6 +151,9 @@ ipcMain.handle('file:write', async (_e, p, buf) => { await fsp.mkdir(path.dirnam
 ipcMain.handle('file:read', (_e, p) => fsp.readFile(p, 'utf8'));
 ipcMain.handle('dialog:openFile', async (_e, filters) => { const r = await dialog.showOpenDialog(win, { properties: ['openFile'], filters }); return r.canceled ? null : r.filePaths[0]; });
 ipcMain.handle('file:exists', (_e, p) => exists(p));
+// Identity of a file's content for cache keys (same path, new content → new key).
+const fileTag = async (p) => { const st = await fsp.stat(p); return `${st.size}-${Math.round(st.mtimeMs)}`; };
+ipcMain.handle('file:tag', (_e, p) => fileTag(p));
 ipcMain.handle('app:paths', () => ({ videos: app.getPath('videos'), data: DATA }));
 
 // ---------- projects ----------
@@ -220,7 +223,10 @@ ipcMain.handle('projects:restore', async (_e, id, at) => {
 
 // ---------- portable package (.velvix): magic, header length, JSON header, then the files back to back ----------
 const MAGIC = Buffer.from('VELVIXP1');
-const pathFields = (p) => [...p.media.flatMap((m) => ['path', 'proxy', 'reversed', 'thumb', 'strip'].map((k) => [m, k])), ...p.clips.map((c) => [c, 'fxPath']), ...p.clips.filter((c) => c.filter).map((c) => [c.filter, 'lut']), [p, 'thumb']];
+// Every stored file path (matte.src / alt.base name a media file: remapped too, so they stay valid after import).
+const pathFields = (p) => [...p.media.flatMap((m) => ['path', 'proxy', 'reversed', 'thumb', 'strip'].map((k) => [m, k])), ...p.clips.map((c) => [c, 'fxPath']), ...p.clips.filter((c) => c.filter).map((c) => [c.filter, 'lut']),
+  ...p.clips.filter((c) => c.matte).flatMap((c) => [[c.matte, 'path'], [c.matte, 'src']]),
+  ...p.clips.filter((c) => c.alt).flatMap((c) => [[c.alt, 'path'], [c.alt, 'base'], ...(c.alt.up ? [[c.alt.up, 'path']] : []), ...(c.alt.stab ? [[c.alt.stab, 'path']] : [])]), [p, 'thumb']];
 ipcMain.handle('package:export', async (_e, id, out) => {
   const p = JSON.parse(await fsp.readFile(projFile(id), 'utf8'));
   const files = [], index = new Map();
@@ -374,6 +380,11 @@ const MODEL_FILES = {
   mdx: ['UVR-MDX-NET-Voc_FT.onnx', 'https://github.com/TRvlvr/model_repo/releases/download/all_public_uvr_models/UVR-MDX-NET-Voc_FT.onnx'],
   // RNNoise model for ffmpeg arnndn (speech denoise, "conjoined burgers").
   rnnoise: ['cb.rnnn', 'https://raw.githubusercontent.com/GregorR/rnnoise-models/master/conjoined-burgers-2018-08-28/cb.rnnn'],
+  // Vision (Sesión 6), pinned revisions: MODNet portrait matting (Apache-2.0), UltraFace RFB-320 face detector (MIT),
+  // Real-ESRGAN realesr-general-x4v3 (SRVGGNetCompact, BSD-3) re-exported to ONNX from the official weights.
+  modnet: ['modnet.onnx', 'https://huggingface.co/Xenova/modnet/resolve/fa2fa546052fba4c08921230a26cc69a333fca12/onnx/model.onnx'],
+  ultraface: ['ultraface-rfb-320.onnx', 'https://github.com/onnx/models/raw/main/validated/vision/body_analysis/ultraface/models/version-RFB-320.onnx'],
+  esrgan: ['realesr-general-x4v3.onnx', 'https://huggingface.co/CoderViking/realesr-general-x4v3-onnx/resolve/c6a971706797c7502945a2b4c4274fce4900d4ab/realesr-general-x4v3.onnx'],
 };
 const downloads = new Map();
 function getModel(name, jobId) {
@@ -419,6 +430,87 @@ ipcMain.handle('audio:saveWav', async (_e, name, chans, rate) => {
   return out;
 });
 ipcMain.handle('cache:path', (_e, name) => path.join(CACHE, `${String(name).replace(/[^\w-]/g, '')}.wav`));
+ipcMain.handle('cache:file', (_e, name) => path.join(CACHE, String(name).replace(/[^\w.-]/g, '').replace(/^\.+/, '')));
+
+// ---------- video analysis (Sesión 6) ----------
+// Raw frames of a video for the vision models: one ffmpeg process per job, read in batches.
+// ss: input seek (frame-exact), frames: how many, vf: filters that produce the frame size the caller expects.
+const streams = new Map();
+ipcMain.handle('frames:open', (_e, { file, ss, frames, vf, pix = 'rgb24' }) => {
+  const id = crypto.randomBytes(6).toString('hex');
+  const p = spawn(FFMPEG, ['-v', 'error', '-ss', String(Math.max(0, ss)), '-i', file, '-frames:v', String(frames), '-vf', vf, '-f', 'rawvideo', '-pix_fmt', pix, '-'], { windowsHide: true });
+  const s = { p, bufs: [], len: 0, ended: false, wake: null, err: '' };
+  p.stdout.on('data', (d) => { s.bufs.push(d); s.len += d.length; if (s.len > 96 << 20) p.stdout.pause(); if (s.wake) s.wake(); });
+  p.stderr.on('data', (d) => { s.err = (s.err + d).slice(-2000); });
+  p.on('close', () => { s.ended = true; if (s.wake) s.wake(); });
+  p.on('error', (e) => { s.err = e.message; s.ended = true; if (s.wake) s.wake(); });
+  streams.set(id, s);
+  return id;
+});
+// Next whole frames (up to n), empty at the end of the stream.
+ipcMain.handle('frames:read', async (_e, id, frameBytes, n) => {
+  const s = streams.get(id);
+  if (!s) return new Uint8Array(0);
+  while (s.len < frameBytes * n && !s.ended) { s.p.stdout.resume(); await new Promise((r) => { s.wake = r; }); s.wake = null; }
+  const all = Buffer.concat(s.bufs), take = Math.min(all.length - (all.length % frameBytes), frameBytes * n);
+  s.bufs = [all.subarray(take)]; s.len = all.length - take;
+  if (!take && s.ended && s.err) throw new Error(s.err.split('\n').filter(Boolean).slice(-2).join(' '));
+  return new Uint8Array(all.buffer, all.byteOffset, take);
+});
+ipcMain.handle('frames:close', (_e, id) => { const s = streams.get(id); if (s) { s.p.kill(); streams.delete(id); } });
+
+// RGBA frames → H.264 video-only file (upscaled copies). Written to .part and renamed when complete.
+const encoders = new Map();
+ipcMain.handle('enc:open', (_e, { out, w, h, fps }) => {
+  const id = crypto.randomBytes(6).toString('hex');
+  const p = spawn(FFMPEG, ['-y', '-f', 'rawvideo', '-pix_fmt', 'rgba', '-s', `${w}x${h}`, '-framerate', String(fps), '-i', 'pipe:0',
+    '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-g', '15', '-pix_fmt', 'yuv420p', '-an', '-f', 'mp4', out + '.part'], { windowsHide: true });
+  let log = '';
+  p.stderr.on('data', (d) => { log = (log + d).slice(-4000); });
+  p.stdin.on('error', () => {});
+  encoders.set(id, { p, out, done: new Promise((r) => p.on('close', (code) => r(code === 0 ? null : log.split('\n').slice(-5).join('\n')))) });
+  return id;
+});
+ipcMain.handle('enc:write', (_e, id, buf) => new Promise((resolve) => {
+  const e = encoders.get(id);
+  if (!e || e.p.exitCode !== null) return resolve(false);
+  if (e.p.stdin.write(Buffer.from(buf))) return resolve(true);
+  e.p.stdin.once('drain', () => resolve(true));
+}));
+ipcMain.handle('enc:close', async (_e, id, cancel) => {
+  const e = encoders.get(id);
+  if (!e) return false;
+  encoders.delete(id);
+  if (cancel) { e.p.kill('SIGKILL'); await e.done; await fsp.rm(e.out + '.part', { force: true }); return false; }
+  e.p.stdin.end();
+  const err = await e.done;
+  if (err) { await fsp.rm(e.out + '.part', { force: true }); throw new Error(err); }
+  await fsp.rename(e.out + '.part', e.out);
+  return true;
+});
+
+// Stabilization (libvidstab, two passes) of `frames` frames from input second ss; video only, optimal static zoom
+// so no black borders show. cwd = cache so the .trf path needs no filtergraph escaping.
+ipcMain.handle('video:stabilize', async (_e, { file, ss, frames, fps, smoothing, jobId }) => {
+  const key = hash([file, await fileTag(file), ss, frames, smoothing].join('|')), out = path.join(CACHE, `stab-${key}.mp4`), trf = `stab-${key}.trf`;
+  if (await exists(out)) return out;
+  const dur = frames / fps, prog = (a, b) => (l) => { const t = timeOf(l); if (t != null) send('job:progress', { jobId, progress: a + (b - a) * Math.min(1, t / dur) }); };
+  const input = ['-ss', String(Math.max(0, ss)), '-i', file, '-frames:v', String(frames)];
+  try {
+    await run(FFMPEG, ['-y', ...input, '-vf', `vidstabdetect=shakiness=8:accuracy=15:result=${trf}`, '-f', 'null', '-'], { cwd: CACHE, onStderr: prog(0, 0.45) });
+    await run(FFMPEG, ['-y', ...input, '-vf', `vidstabtransform=input=${trf}:smoothing=${Math.round(smoothing)}:optzoom=1:interpol=bicubic,unsharp=5:5:0.6:3:3:0.3`,
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-g', '15', '-pix_fmt', 'yuv420p', '-an', '-f', 'mp4', out + '.part'], { cwd: CACHE, onStderr: prog(0.45, 1) });
+    await fsp.rename(out + '.part', out);
+  } finally { await fsp.rm(path.join(CACHE, trf), { force: true }); }
+  return out;
+});
+
+// Scene cuts (ffmpeg scdet) between input seconds ss and ss + dur: times of the first frame of each new shot.
+ipcMain.handle('video:scenes', async (_e, { file, ss, dur, threshold }) => {
+  let log = '';
+  await run(FFMPEG, ['-hide_banner', '-ss', String(Math.max(0, ss)), '-i', file, '-t', String(dur), '-an', '-vf', `scale=320:-2,scdet=threshold=${threshold}`, '-f', 'null', '-'], { onStderr: (l) => { log += l; } });
+  return [...log.matchAll(/lavfi\.scd\.score:\s*([\d.]+),\s*lavfi\.scd\.time:\s*([\d.]+)/g)].map((m) => ({ t: ss + +m[2], score: +m[1] }));
+});
 
 // ---------- audio effects ----------
 const VOICES = {

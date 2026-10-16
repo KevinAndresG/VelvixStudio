@@ -1,5 +1,5 @@
 // Media element pool: keeps <video>/<audio>/<img> per clip in sync with the timeline clock.
-import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf, projectDuration } from './model.js';
+import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf, projectDuration, vidSrc } from './model.js';
 import { activeVisual } from './render.js';
 import { FrameReader } from './decoder.js';
 
@@ -10,8 +10,10 @@ export function imageFor(path) {
   return img;
 }
 
-// Path the visual element should play (reversed proxy / compatibility proxy / original).
-export const videoPath = (clip, media) => (clip.reverse && media.reversed) || media.proxy || media.path;
+// Path the visual element should play (stabilized/upscaled copy, reversed proxy, compatibility proxy or original)
+// and the second of that file shown at timeline time t (the processed copy starts at its own t0).
+export const videoPath = (clip, media) => vidSrc(clip, media).path;
+export function videoTime(clip, media, t) { const v = vidSrc(clip, media); return clamp(sourceTime(clip, t, media) - v.off, 0, Math.max(0, v.dur - 0.001)); }
 // Path audio should come from (effects-rendered WAV wins).
 export const audioPath = (clip, media) => (clip.fxPath) || (clip.reverse && media.reversed) || media.proxy || media.path;
 
@@ -141,8 +143,8 @@ export class SourcePool {
       if (!media || media.missing) continue;
       needVideo.add(c.id);
       const e = this._el(this.videos, c, videoPath(c, media), 'video');
-      const want = clamp(sourceTime(c, Math.max(t, c.start - (it.tin || 0)), media), 0, media.duration - 0.01);
-      const ownsAudio = !c.detached && !c.fxPath;
+      const want = Math.min(videoTime(c, media, Math.max(t, c.start - (it.tin || 0))), vidSrc(c, media).dur - 0.01);
+      const ownsAudio = !c.detached && !c.fxPath && !vidSrc(c, media).alt; // a processed copy has no audio: an <audio> plays it
       const tk = trackOf(project, c);
       const active = !it.upcoming && t >= c.start && t < clipEnd(c);
       const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) * duckGain(project, c, t) : 0;
@@ -150,11 +152,11 @@ export class SourcePool {
       this._drive(e.el, want, speedAt(c, t), playing && !it.upcoming);
     }
     for (const c of project.clips) {
-      const isAudio = c.type === 'audio' || (c.type === 'video' && c.fxPath && !c.detached);
-      if (!isAudio) continue;
+      if (c.type !== 'audio' && c.type !== 'video') continue;
       if (!(t >= c.start - lookahead && t < clipEnd(c))) continue;
       const media = mediaOf(project, c);
       if (!media || media.missing) continue;
+      if (c.type === 'video' && (c.detached || !(c.fxPath || (vidSrc(c, media).alt && media.hasAudio)))) continue;
       needAudio.add(c.id);
       const e = this._el(this.audios, c, audioPath(c, media), 'audio');
       const active = t >= c.start;
@@ -202,7 +204,7 @@ export class SourcePool {
   // Export fallback: seek a <video> element to the exact source frame.
   _seekClip(c, media, t) {
     const e = this._el(this.videos, c, videoPath(c, media), 'video');
-    const want = clamp(sourceTime(c, t, media), 0, Math.max(0, media.duration - 0.001));
+    const want = videoTime(c, media, t);
     return whenReady(e.el).then(() => seekTo(e.el, want));
   }
 
@@ -286,7 +288,7 @@ export class ExportPool extends SourcePool {
       if (c.type !== 'video') continue;
       keep.add(c.id);
       jobs.push((async () => {
-        const want = clamp(sourceTime(c, t, media), 0, Math.max(0, media.duration - 0.001));
+        const want = videoTime(c, media, t);
         if (!this.failed.has(c.id)) {
           try {
             let r = this.readers.get(c.id);
