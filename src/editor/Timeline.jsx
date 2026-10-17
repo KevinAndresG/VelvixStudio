@@ -67,7 +67,7 @@ function Clip({ clip, track, project, zoom, selected, ghost, onDown, onTrim, onC
   const left = (ghost ? ghost.start : clip.start) * zoom, width = Math.max(4, clip.duration * zoom);
   const h = rowH(track) - 6;
   const kfTimes = [...new Set(Object.values(clip.kf || {}).flat().map((k) => k.t))];
-  const label = clip.type === 'text' ? clip.text.content : clip.type === 'effect' ? (clip.filter ? 'Filtro' : EFFECTS[clip.effect.type]) : clip.name;
+  const label = clip.type === 'text' ? (clip.text.badge ? clip.name : clip.text.content) : clip.type === 'effect' ? (clip.filter ? 'Filtro' : EFFECTS[clip.effect.type]) : clip.name;
   return (
     <div className={`clip c-${clip.type} ${selected ? 'sel' : ''} ${ghost ? 'dragging' : ''} ${media && media.missing ? 'missing' : ''}`}
       style={{ left, width, height: h }}
