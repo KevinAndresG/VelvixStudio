@@ -44,7 +44,11 @@ export const DEFAULT_TEXT = {
   keyword: { on: false, color: '#ffe14d' }, // auto-colored key words
   wordAnim: 'none', // per-word entrance timed to speech: pop | bounce | slide | fade
   maxWidth: 0.85,
+  curve: 0, // -100..100: bends the lines along a circle (∩ positive, ∪ negative)
+  depth: { on: false, size: 14, angle: 50, color: '#7a1c3d', shade: true }, // 3D extrusion
+  wordStyles: {}, // word index → { color, bold, italic, underline, scale, font }
 };
+export const TEXT_GROUPS = ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword', 'depth'];
 export const DEFAULT_AUDIO_FX = { voice: 'none', pitch: 0, denoise: false, normalize: false, bass: 0, treble: 0, enhance: false };
 
 export function newClip(type, props = {}) {
@@ -327,6 +331,12 @@ export const TEXT_PRESETS = [
   { name: 'Deslizar', t: { color: '#ffffff', stroke: { on: false }, shadow: { on: true, color: '#000000aa', blur: 10, x: 0, y: 4 }, bg: { on: true, color: '#000000', opacity: 60, radius: 12, pad: 14 }, glow: { on: false }, gradient: { on: false }, wordAnim: 'slide', keyword: { on: true, color: '#5ee7ff' } } },
   { name: 'Creador', t: { color: '#ffffff', font: 'Arial Black', uppercase: true, stroke: { on: true, color: '#000000', width: 10 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'pop', keyword: { on: true, color: '#ff3d6e' }, highlight: { on: true, color: '#3dff8b' } } },
   { name: 'Suave', t: { color: '#ffffff', bold: false, stroke: { on: false }, shadow: { on: true, color: '#000000cc', blur: 14, x: 0, y: 3 }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, wordAnim: 'fade', keyword: { on: false } } },
+  // 3D and curved text (Sesión 7). Appended: captions store the preset index.
+  { name: '3D bloque', t: { color: '#ffd23f', font: 'Arial Black', uppercase: true, stroke: { on: true, color: '#3b1f7a', width: 4 }, shadow: { on: true, color: '#00000088', blur: 18, x: 0, y: 10 }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, depth: { on: true, size: 18, angle: 60, color: '#e8115b', shade: true } } },
+  { name: '3D metal', t: { font: 'Impact', uppercase: true, stroke: { on: false }, shadow: { on: true, color: '#000000aa', blur: 16, x: 0, y: 8 }, bg: { on: false }, glow: { on: false }, gradient: { on: true, from: '#ffffff', to: '#8a96a8' }, depth: { on: true, size: 14, angle: 90, color: '#3c4452', shade: true } } },
+  { name: '3D neón', t: { color: '#ffffff', stroke: { on: false }, shadow: { on: false }, bg: { on: false }, glow: { on: true, color: '#ff2fb3', size: 26 }, gradient: { on: false }, depth: { on: true, size: 10, angle: 35, color: '#5b1bd6', shade: false } } },
+  { name: 'Arco', t: { color: '#ffffff', uppercase: true, letterSpacing: 4, stroke: { on: true, color: '#000000', width: 6 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, curve: 30 } },
+  { name: 'Sonrisa', t: { color: '#ffe14d', uppercase: true, letterSpacing: 2, stroke: { on: true, color: '#1a1a1a', width: 7 }, shadow: { on: false }, bg: { on: false }, glow: { on: false }, gradient: { on: false }, curve: -30 } },
 ];
 export const WORD_ANIMS = { none: 'Ninguna', pop: 'Pop', bounce: 'Rebote', slide: 'Deslizar', fade: 'Aparecer' };
 

@@ -20,7 +20,7 @@ export function mergeRanges(ranges) {
 // Caption clip keeps only words outside [a, b]; returns false when nothing is left.
 function trimCaption(c, a, b) {
   const len = b - a, tokens = c.text.content.split(/\s+/).filter(Boolean);
-  const words = c.words.map((w, i) => ({ text: tokens.length === c.words.length ? tokens[i] : w.text, s: c.start + w.s, e: c.start + w.e }))
+  const words = c.words.map((w, i) => ({ text: tokens.length === c.words.length ? tokens[i] : w.text, s: c.start + w.s, e: c.start + w.e, i }))
     .filter((w) => { const m = (w.s + w.e) / 2; return m < a || m >= b; })
     .map((w) => (w.s >= b - 1e-4 ? { ...w, s: w.s - len, e: w.e - len } : { ...w, e: Math.min(w.e, a) }));
   if (!words.length) return false;
@@ -28,6 +28,9 @@ function trimCaption(c, a, b) {
   c.duration = Math.max(0.3, words[words.length - 1].e - c.start);
   c.text.content = words.map((w) => w.text).join(' ');
   c.words = words.map((w) => ({ text: w.text, s: w.s - c.start, e: Math.max(w.s, w.e) - c.start }));
+  // Per-word styles follow their word (indices shift when words before them are cut).
+  const ws = c.text.wordStyles;
+  if (ws && Object.keys(ws).length) c.text.wordStyles = Object.fromEntries(words.map((w, j) => [j, ws[w.i]]).filter(([, s]) => s));
   return true;
 }
 

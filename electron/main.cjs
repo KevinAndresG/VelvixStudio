@@ -33,7 +33,7 @@ const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/mp4', '.webm': 'video/webm', '.mkv': 'video/webm', '.avi': 'video/x-msvideo',
-  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.flac': 'audio/flac', '.opus': 'audio/ogg',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.flac': 'audio/flac', '.opus': 'audio/ogg',
   '.wasm': 'application/wasm', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.ico': 'image/x-icon',
 };
 const mimeOf = (p) => MIME[path.extname(p).toLowerCase()] || 'application/octet-stream';
@@ -136,7 +136,7 @@ const send = (ch, data) => win && !win.isDestroyed() && win.webContents.send(ch,
 const timeOf = (line) => { const m = /time=(\d+):(\d+):([\d.]+)/.exec(line); return m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null; };
 
 // ---------- dialogs / shell ----------
-const MEDIA_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'wmv', 'flv', '3gp', 'mts', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus', 'wma', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+const MEDIA_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'wmv', 'flv', '3gp', 'mts', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus', 'wma', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'json'];
 ipcMain.handle('dialog:openMedia', async () => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], filters: [{ name: 'Multimedia', extensions: MEDIA_EXT }] });
   return r.canceled ? [] : r.filePaths;
@@ -273,6 +273,28 @@ ipcMain.handle('package:import', async (_e, file) => {
   Object.assign(p, { id, createdAt: Date.now(), updatedAt: Date.now() });
   await fsp.writeFile(projFile(id), JSON.stringify(p));
   return id;
+});
+
+// ---------- project templates saved by the user (Sesión 7): { id, name, createdAt, thumb, project } ----------
+const TEMPLATES = path.join(DATA, 'templates');
+fs.mkdirSync(TEMPLATES, { recursive: true });
+const tplFile = (id) => path.join(TEMPLATES, `${String(id).replace(/[^\w-]/g, '')}.json`);
+ipcMain.handle('templates:list', async () => {
+  const out = [];
+  for (const f of (await fsp.readdir(TEMPLATES)).filter((x) => x.endsWith('.json'))) {
+    try { const t = JSON.parse(await fsp.readFile(path.join(TEMPLATES, f), 'utf8')); out.push(t); } catch { /* skip corrupt */ }
+  }
+  return out.sort((a, b) => b.createdAt - a.createdAt);
+});
+ipcMain.handle('templates:save', async (_e, t, thumb) => {
+  if (thumb) { t.thumb = path.join(TEMPLATES, `${String(t.id).replace(/[^\w-]/g, '')}.jpg`); await fsp.writeFile(t.thumb, Buffer.from(thumb)); }
+  await fsp.writeFile(tplFile(t.id) + '.tmp', JSON.stringify(t));
+  await fsp.rename(tplFile(t.id) + '.tmp', tplFile(t.id));
+  return t;
+});
+ipcMain.handle('templates:delete', async (_e, id) => {
+  await fsp.rm(tplFile(id), { force: true });
+  await fsp.rm(tplFile(id).replace(/\.json$/, '.jpg'), { force: true });
 });
 
 // ---------- brand kit (shared by every project) ----------
@@ -444,6 +466,36 @@ function getModel(name, jobId) {
   return downloads.get(name);
 }
 ipcMain.handle('models:get', (_e, name, jobId) => getModel(name, jobId));
+
+// ---------- CC0 music & sound library (Sesión 7): files from Wikimedia Commons, downloaded once ----------
+const LIBRARY = path.join(DATA, 'library');
+fs.mkdirSync(LIBRARY, { recursive: true });
+const libFile = ({ id, ext }) => path.join(LIBRARY, `${String(id).replace(/[^\w-]/g, '')}.${String(ext).replace(/[^\w]/g, '')}`);
+const libDownloads = new Map();
+ipcMain.handle('library:has', async (_e, items) => (await Promise.all(items.map(async (it) => ((await exists(libFile(it))) ? it.id : null)))).filter(Boolean));
+ipcMain.handle('library:get', (_e, item, jobId) => {
+  const out = libFile(item);
+  if (!/^https:\/\/upload\.wikimedia\.org\/wikipedia\/commons\//.test(item.url)) throw new Error('Origen no permitido');
+  if (!libDownloads.has(out)) {
+    libDownloads.set(out, (async () => {
+      if (await exists(out)) return out;
+      // Wikimedia asks for an identifying User-Agent.
+      const res = await fetch(item.url, { headers: { 'User-Agent': `VelvixStudio/${app.getVersion()} (offline video editor; CC0 library)` } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const total = +res.headers.get('content-length') || 0, part = out + '.part', ws = fs.createWriteStream(part);
+      let got = 0;
+      for await (const chunk of res.body) {
+        got += chunk.length;
+        if (!ws.write(chunk)) await new Promise((r) => ws.once('drain', r));
+        if (jobId && total) send('job:progress', { jobId, progress: got / total });
+      }
+      await new Promise((r, j) => ws.end((e) => (e ? j(e) : r())));
+      await fsp.rename(part, out);
+      return out;
+    })().finally(() => libDownloads.delete(out)));
+  }
+  return libDownloads.get(out);
+});
 
 // Whole file as float32 PCM (interleaved), for the separation model and beat detection.
 ipcMain.handle('audio:decode', async (_e, file, rate, channels) => {

@@ -1,8 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { setState, toast } from '../store.js';
 import { newProject, ASPECTS, mediaUrl, uid, fmtTime } from '../engine/model.js';
 import { Icon, IconBtn, Modal } from '../ui.jsx';
 import { importPaths, addToTimeline, reprobeMedia } from '../editor/actions.js';
+import { TEMPLATES, fromTemplate } from '../engine/templates.js';
+import { renderFrame } from '../engine/render.js';
+
+// Built-in template preview: its first seconds drawn by the real renderer (no media).
+function TplThumb({ tpl }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const p = tpl.make(), c = ref.current, h = 120, w = Math.round((p.width / p.height) * h);
+    c.width = w; c.height = h;
+    renderFrame(c.getContext('2d'), p, tpl.at || 1, () => null, w, h);
+  }, [tpl]);
+  return <canvas ref={ref} />;
+}
 
 const api = window.api;
 
@@ -33,8 +46,15 @@ export default function Home() {
   const [crashed, setCrashed] = useState(null);
   const [versions, setVersions] = useState(null); // { p, list }
 
+  const [mine, setMine] = useState([]); // templates saved by the user
   const refresh = () => api.listProjects().then(setList);
-  useEffect(() => { refresh(); api.sessionCrashed().then((c) => c && setCrashed(c.projectId)); }, []);
+  const refreshTpl = () => api.templatesList().then(setMine);
+  useEffect(() => { refresh(); refreshTpl(); api.sessionCrashed().then((c) => c && setCrashed(c.projectId)); }, []);
+  const createFrom = async (tpl) => {
+    const p = fromTemplate(tpl);
+    await api.saveProject(p);
+    await openProject(p);
+  };
   const crashedProj = crashed && list && list.find((p) => p.id === crashed);
 
   const showVersions = async (p) => setVersions({ p, list: await api.projectVersions(p.id) });
@@ -123,6 +143,23 @@ export default function Home() {
               </button>
             );
           })}
+        </div>
+      </section>
+      <section className="projects templates">
+        <h3>Plantillas</h3>
+        <div className="tpl-grid">
+          {TEMPLATES.map((t) => (
+            <button key={t.id} className="tpl" data-tpl={t.id} onClick={() => createFrom(t)} title={`Nuevo proyecto con «${t.name}»`}>
+              <div className="tpl-thumb"><TplThumb tpl={t} /></div><b>{t.name}</b><small>{t.desc}</small>
+            </button>
+          ))}
+          {mine.map((t) => (
+            <div key={t.id} className="tpl mine" data-tpl={t.id} onClick={() => createFrom(t)} title={`Nuevo proyecto con «${t.name}»`}>
+              <div className="tpl-thumb">{t.thumb ? <img src={mediaUrl(t.thumb)} alt="" /> : <Icon name="layers" size={28} />}</div>
+              <b>{t.name}</b><small>Mi plantilla · {t.project.width}×{t.project.height}</small>
+              <span className="tpl-del" onClick={(e) => e.stopPropagation()}><IconBtn icon="trash" title="Eliminar plantilla" size={14} onClick={async () => { await api.templateDelete(t.id); refreshTpl(); }} /></span>
+            </div>
+          ))}
         </div>
       </section>
       <section className="projects">

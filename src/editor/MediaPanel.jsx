@@ -1,18 +1,20 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, update, toast } from '../store.js';
-import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER } from '../engine/model.js';
+import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER, DEFAULT_TEXT } from '../engine/model.js';
+import { BADGES, BADGE_THEMES, drawBadge, badgeSize } from '../engine/stickers.js';
 import { cssFilter } from '../engine/render.js';
 import { Icon, IconBtn, Select, Slider, Toggle } from '../ui.jsx';
-import { importDialog, importPaths, addToTimeline, addText, addSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia } from './actions.js';
+import { importDialog, importPaths, addToTimeline, addText, addSticker, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
 import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 import BrandTab from './BrandTab.jsx';
 import VisionTab from './VisionTab.jsx';
+import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize } from './library.js';
 
 const TABS = [
-  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
+  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
   ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'], ['ai', 'wand', 'IA'], ['brand', 'diamond', 'Marca'],
 ];
 
@@ -30,6 +32,7 @@ export default function MediaPanel() {
       <div className="left-body">
         {tab === 'media' && <MediaTab />}
         {tab === 'audio' && <AudioTab />}
+        {tab === 'library' && <LibraryTab />}
         {tab === 'text' && <TextTab />}
         {tab === 'stickers' && <StickersTab />}
         {tab === 'effects' && <EffectsTab />}
@@ -163,11 +166,65 @@ function AudioTab() {
   );
 }
 
+// Free CC0 music and sound effects: preview, add at the playhead, or download the whole pack for offline use.
+let libAudio = null;
+function LibraryTab() {
+  const [kind, setKind] = useState('music');
+  const [cat, setCat] = useState('');
+  const [q, setQ] = useState('');
+  const [have, setHave] = useState(new Set());
+  const [playing, setPlaying] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const refresh = () => libDownloaded(ALL).then((ids) => setHave(new Set(ids)));
+  useEffect(() => { refresh(); return () => { if (libAudio) libAudio.pause(); }; }, []);
+  const shown = ALL.filter((x) => x.kind === kind && (!cat || x.cat === cat) && (!q || (x.name + ' ' + x.author).toLowerCase().includes(q.toLowerCase())));
+  const play = async (it) => {
+    if (libAudio) libAudio.pause();
+    if (playing === it.id) return setPlaying(null);
+    setPlaying(it.id);
+    try {
+      const f = await libFile(it);
+      refresh();
+      libAudio = new Audio(mediaUrl(f)); libAudio.onended = () => setPlaying(null);
+      await libAudio.play();
+    } catch (e) { setPlaying(null); toast(`No se pudo reproducir: ${e.message}`, 'error'); }
+  };
+  const add = async (it) => { await addFromLibrary(it); refresh(); };
+  const all = async () => { setBusy(true); await downloadAll(kind); setBusy(false); refresh(); };
+  const missing = shown.filter((x) => !x.synth && !have.has(x.id)).length;
+  return (
+    <div className="panel library">
+      <div className="seg">
+        {[['music', 'Música'], ['sfx', 'Efectos de sonido']].map(([k, v]) => <button key={k} className={kind === k ? 'active' : ''} onClick={() => { setKind(k); setCat(''); }}>{v}</button>)}
+      </div>
+      <div className="search"><Icon name="search" size={14} /><input placeholder="Buscar" value={q} onChange={(e) => setQ(e.target.value)} /></div>
+      <div className="chips wrap">
+        <button className={!cat ? 'active' : ''} onClick={() => setCat('')}>Todo</button>
+        {Object.entries(LIB_CATS[kind]).map(([k, v]) => <button key={k} className={cat === k ? 'active' : ''} onClick={() => setCat(k)}>{v}</button>)}
+      </div>
+      <div className="lib-list">
+        {shown.map((it) => (
+          <div key={it.id} className="lib-row" data-lib={it.id} onDoubleClick={() => add(it)}>
+            <IconBtn icon={playing === it.id ? 'pause' : 'play'} title={playing === it.id ? 'Detener' : 'Escuchar'} size={14} onClick={() => play(it)} />
+            <span><b title={it.name}>{it.name}</b><small>{it.author}{it.page ? <> · <a href={it.page} target="_blank" rel="noreferrer">CC0</a></> : ' · CC0'}</small></span>
+            {it.dur != null && <em>{fmtTime(it.dur)}</em>}
+            {(it.synth || have.has(it.id)) && <i className="lib-ok" title="Disponible sin internet">✓</i>}
+            <IconBtn icon="plus" title="Agregar en el cursor" size={14} onClick={() => add(it)} />
+          </div>
+        ))}
+      </div>
+      {kind === 'music' || missing ? <button className="btn wide lib-all" disabled={busy || !ALL.some((x) => x.kind === kind && !x.synth && !have.has(x.id))} onClick={all}><Icon name="download" size={15} /> {busy ? 'Descargando…' : `Descargar ${kind === 'music' ? 'toda la música' : 'todos los efectos'} (${Math.round(libSize(kind))} MB)`}</button> : null}
+      <p className="hint">Solo música y sonidos libres de derechos (CC0 / dominio público) de Wikimedia Commons, o generados por la app: puedes usarlos en videos con fines comerciales sin atribución ni reclamos de copyright. Se descargan una vez y luego funcionan sin internet.</p>
+    </div>
+  );
+}
+
 // CSS approximation of a text preset for the catalog preview.
 export function presetStyle(t) {
   const s = { color: t.color || '#fff', fontWeight: t.bold === false ? 400 : 800, letterSpacing: (t.letterSpacing || 0) / 3, textTransform: t.uppercase ? 'uppercase' : 'none' };
   const shadows = [];
   if (t.glow && t.glow.on) shadows.push(`0 0 8px ${t.glow.color}`, `0 0 14px ${t.glow.color}`);
+  if (t.depth && t.depth.on) for (let i = 1; i <= 4; i++) shadows.push(`${(Math.cos(((t.depth.angle ?? 50) * Math.PI) / 180) * i).toFixed(1)}px ${(Math.sin(((t.depth.angle ?? 50) * Math.PI) / 180) * i).toFixed(1)}px 0 ${t.depth.color}`);
   if (t.shadow && t.shadow.on) shadows.push(`${(t.shadow.x || 0) / 3}px ${(t.shadow.y || 0) / 3}px ${(t.shadow.blur || 0) / 3}px ${t.shadow.color}`);
   if (shadows.length) s.textShadow = shadows.join(',');
   if (t.stroke && t.stroke.on) { s.WebkitTextStroke = `${Math.max(1, t.stroke.width / 3)}px ${t.stroke.color}`; s.paintOrder = 'stroke fill'; }
@@ -192,9 +249,43 @@ function TextTab() {
   );
 }
 
+// Live preview of an animated sticker (same drawing code as the video).
+function BadgeThumb({ kind, theme }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    let raf;
+    const t0 = performance.now(), tx = { ...DEFAULT_TEXT, content: BADGES[kind].label, badge: { kind, theme: theme || BADGES[kind].theme } };
+    const draw = () => {
+      const c = ref.current; if (!c) return;
+      const x = c.getContext('2d');
+      x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height);
+      const { w, h } = badgeSize(x, tx, 40), k = Math.min(1, (c.width - 12) / w, (c.height - 8) / h);
+      x.translate(c.width / 2, c.height / 2); x.scale(k, k);
+      drawBadge(x, tx, (performance.now() - t0) / 1000, 40);
+      raf = requestAnimationFrame(draw);
+    };
+    raf = requestAnimationFrame(draw);
+    return () => cancelAnimationFrame(raf);
+  }, [kind, theme]);
+  return <canvas ref={ref} width={260} height={90} />;
+}
+
 function StickersTab() {
+  const [theme, setTheme] = useState('');
   return (
     <div className="panel">
+      <h5>Stickers animados para redes</h5>
+      <div className="seg wrap badge-themes">
+        <button className={!theme ? 'active' : ''} onClick={() => setTheme('')}>Auto</button>
+        {Object.entries(BADGE_THEMES).map(([k, v]) => <button key={k} className={theme === k ? 'active' : ''} onClick={() => setTheme(k)}>{v.name}</button>)}
+      </div>
+      <div className="badge-grid">
+        {Object.entries(BADGES).map(([k, v]) => (
+          <button key={k} data-badge={k} onClick={() => addBadge(k, theme)} title={`Agregar «${v.name}»`}><BadgeThumb kind={k} theme={theme} /><small>{v.name}</small></button>
+        ))}
+      </div>
+      <button className="btn wide import-sticker" onClick={importSticker}><Icon name="upload" size={15} /> Importar GIF, WebP o Lottie animado</button>
+      <p className="hint">Los GIF/WebP/APNG con transparencia y las animaciones Lottie (.json) se repiten en bucle y conservan el fondo transparente.</p>
       <h5>Stickers y emojis</h5>
       <div className="sticker-grid">
         {STICKERS.map((s) => <button key={s} onClick={() => addSticker(s)} title="Agregar sticker">{s}</button>)}

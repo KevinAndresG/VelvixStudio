@@ -2,6 +2,7 @@
 import { clamp, clipEnd, mediaOf, sourceTime, speedAt, volumeAt, mediaUrl, trackOf, projectDuration, vidSrc } from './model.js';
 import { activeVisual } from './render.js';
 import { FrameReader } from './decoder.js';
+import { animDrawable, preloadAnim } from './animated.js';
 
 const images = new Map(); // path → HTMLImageElement (shared, images are stateless)
 export function imageFor(path) {
@@ -110,9 +111,10 @@ export class SourcePool {
     map.delete(id);
   }
 
-  getDrawable = (clip, media) => {
+  getDrawable = (clip, media, t) => {
     if (!media) return null;
     if (clip.type === 'image' || media.type === 'image') {
+      if (media.anim || media.lottie) return animDrawable(media, ((t ?? clip.start) - clip.start) * (clip.speed || 1));
       const img = imageFor(media.path);
       return img.complete && img.naturalWidth ? { el: img, w: img.naturalWidth, h: img.naturalHeight } : null;
     }
@@ -213,7 +215,7 @@ export class SourcePool {
     for (const it of activeVisual(project, t)) {
       const c = it.clip, media = mediaOf(project, c);
       if (!media) continue;
-      if (c.type === 'image') { const img = imageFor(media.path); if (!img.complete) jobs.push(img.decode().catch(() => {})); continue; }
+      if (c.type === 'image') { const a = preloadAnim(media); if (a) { jobs.push(a.catch(() => {})); continue; } const img = imageFor(media.path); if (!img.complete) jobs.push(img.decode().catch(() => {})); continue; }
       if (c.type !== 'video') continue;
       keep.add(c.id);
       jobs.push(this._seekClip(c, media, t));
@@ -275,7 +277,7 @@ export class ExportPool extends SourcePool {
     this.frames = new Map(); // clipId → drawable for the current frame
     this.failed = new Set();
     const base = this.getDrawable;
-    this.getDrawable = (clip, media) => (clip.type === 'video' && this.frames.get(clip.id)) || base(clip, media);
+    this.getDrawable = (clip, media, t) => (clip.type === 'video' && this.frames.get(clip.id)) || base(clip, media, t);
   }
 
   async prepare(project, t) {
@@ -284,7 +286,7 @@ export class ExportPool extends SourcePool {
     for (const it of activeVisual(project, t)) {
       const c = it.clip, media = mediaOf(project, c);
       if (!media) continue;
-      if (c.type === 'image') { const img = imageFor(media.path); if (!img.complete) jobs.push(img.decode().catch(() => {})); continue; }
+      if (c.type === 'image') { const a = preloadAnim(media); if (a) { jobs.push(a.catch(() => {})); continue; } const img = imageFor(media.path); if (!img.complete) jobs.push(img.decode().catch(() => {})); continue; }
       if (c.type !== 'video') continue;
       keep.add(c.id);
       jobs.push((async () => {

@@ -674,6 +674,15 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   for (const line of (vs.stdout || '').split('\n')) if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
   if (vs.status !== 0 && fails.length === ns) fails.push(`sar terminó con código ${vs.status} ${(vs.stderr || '').slice(-300)}`);
 
+  // ---------- Sesión 7: contenido creativo ----------
+  const n7 = fails.length;
+  const v7 = cp3.spawnSync(process.execPath, [path.join(__dirname, 'verify7.cjs')], { env: process.env, encoding: 'utf8', timeout: 900000 });
+  for (const line of (v7.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('verify7 ' + line);
+  }
+  if (v7.status !== 0 && fails.length === n7) fails.push(`verify7 terminó con código ${v7.status} ${(v7.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);

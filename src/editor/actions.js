@@ -1,5 +1,7 @@
 import { getState, setState, update, toast, setJob } from '../store.js';
-import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, clamp, subClip, sourceTime, MAX_SPEED } from '../engine/model.js';
+import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, TEXT_GROUPS, clamp, subClip, sourceTime, MAX_SPEED } from '../engine/model.js';
+import { probeAnimated, loadAnimated, parseLottie, loadLottie, animDrawable } from '../engine/animated.js';
+import { BADGES } from '../engine/stickers.js';
 
 const api = window.api;
 const PLAYABLE = ['h264', 'vp8', 'vp9', 'av1', 'hevc', 'theora'];
@@ -54,7 +56,9 @@ export async function importPaths(paths) {
     const jobId = uid();
     setJob(jobId, { label: `Importando ${path.split(/[\\/]/).pop()}`, progress: 0 });
     try {
-      const info = await api.probe(path);
+      const info = /\.json$/i.test(path) ? await lottieInfo(path) : await api.probe(path);
+      // Animated GIF / WebP / APNG: kept as an image with transparency, frames decoded in the renderer (too big → video).
+      if (/\.(gif|webp|a?png)$/i.test(path) && (await probeAnimated(path))) Object.assign(info, { type: 'image', anim: true, duration: (await loadAnimated(path)).dur, hasAudio: false });
       const media = { id: uid(), path, name: path.split(/[\\/]/).pop(), ...info, thumb: null, strip: null, proxy: null, reversed: null };
       update((p) => { p.media.push(media); });
       added.push(media);
@@ -81,13 +85,33 @@ async function prepareMedia(media, jobId = uid(), reverse = false) {
       patch({ proxy: src });
       if (reverse) patch({ reversed: await api.transcode(src, 'reverse', duration, jobId) });
     }
-    if (type !== 'audio') {
+    if (media.anim || media.lottie) {
+      const thumb = await animThumb(media);
+      patch({ thumb, strip: thumb });
+    } else if (type !== 'audio') {
       const thumb = await api.thumb(src, type === 'image' ? 0 : Math.min(1, duration / 3), 160); // a still has no frame at 1 s
       const strip = type === 'video' ? await api.strip(src, duration, 16) : thumb;
       patch({ thumb, strip });
     }
   } catch (e) { toast(`Error procesando ${media.name}: ${e.message}`, 'error'); }
   setJob(jobId, null);
+}
+
+async function lottieInfo(path) {
+  const { width, height, duration, fps } = await parseLottie(await api.readFile(path));
+  return { type: 'image', lottie: true, width, height, duration, fps, hasAudio: false };
+}
+// First frame over a checkerboard (shows the transparency), saved as PNG in the cache.
+async function animThumb(media) {
+  const d = media.lottie ? (await loadLottie(media.path), animDrawable(media, 0)) : (await loadAnimated(media.path), animDrawable(media, 0));
+  const h = 160, w = Math.max(1, Math.round((d.w / d.h) * h)), c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  for (let i = 0; i < w; i += 16) for (let j = 0; j < h; j += 16) { x.fillStyle = (i + j) % 32 ? '#3a3d46' : '#2a2d36'; x.fillRect(i, j, 16, 16); }
+  x.drawImage(d.el, 0, 0, w, h);
+  const out = await api.cacheFile(`anim-${media.id}.png`);
+  await api.writeFile(out, await (await new Promise((r) => c.toBlob(r, 'image/png'))).arrayBuffer());
+  return out;
 }
 
 // Videos without `sar` (projects saved before 1.6.1, relinked files): probe again. Anamorphic ones had their coded
@@ -113,7 +137,7 @@ export function addToTimeline(media, { at = null, trackId = null } = {}) {
   let id;
   update((p) => {
     const type = media.type === 'image' ? 'image' : media.type;
-    const c = newClip(type, { mediaId: media.id, name: media.name, duration: media.duration });
+    const c = newClip(type, { mediaId: media.id, name: media.name, duration: media.anim || media.lottie ? Math.max(3, media.duration) : media.duration });
     if (type === 'audio') {
       c.start = at ?? getState().time;
       c.trackId = trackId || ensureTrack(p, 'audio', c.start, c.start + c.duration);
@@ -300,7 +324,7 @@ export function addText(preset = {}, content = 'Escribe aquí') {
     const start = getState().time;
     const c = newClip('text', { name: 'Texto', start, duration: 3 });
     c.text = { ...structuredClone(DEFAULT_TEXT), ...structuredClone(preset), content };
-    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
+    for (const k of TEXT_GROUPS) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
     c.trackId = ensureTrack(p, 'text', start, start + c.duration);
     p.clips.push(c); id = c.id;
   });
@@ -385,4 +409,29 @@ export async function addTTS(text, voice, rate) {
 
 export function addMarker() {
   update((p) => { p.markers = [...(p.markers || []), { id: uid(), t: getState().time, color: '#ffd23f' }]; });
+}
+
+// Animated call-to-action sticker (stickers.js) in the lower third, on a text track at the playhead.
+export function addBadge(kind, theme) {
+  const def = BADGES[kind];
+  let id;
+  update((p) => {
+    const start = getState().time;
+    const c = newClip('text', { name: `Sticker ${def.name}`, start, duration: 4, sticker: true });
+    c.text = { ...structuredClone(DEFAULT_TEXT), content: def.label, size: 80, badge: { kind, theme: theme || def.theme }, shadow: { ...DEFAULT_TEXT.shadow, on: false } };
+    c.transform.y = 0.3;
+    c.anim.in = { type: 'pop', dur: 0.4 };
+    c.anim.out = { type: 'fade', dur: 0.3 };
+    c.trackId = ensureTrack(p, 'text', start, start + c.duration);
+    p.clips.push(c); id = c.id;
+  });
+  setState({ selection: [id] });
+}
+
+// GIF / animated WebP / APNG / Lottie sticker from a file, as an overlay at the playhead.
+export async function importSticker() {
+  const f = await api.openFile([{ name: 'Stickers animados', extensions: ['gif', 'webp', 'png', 'json'] }]);
+  if (!f) return;
+  const [m] = await importPaths([f]);
+  if (m) addToTimeline(m, { at: getState().time });
 }

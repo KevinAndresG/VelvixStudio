@@ -33,6 +33,11 @@ contextBridge.exposeInMainWorld('api', {
   brandSet: inv('brand:set'),
   brandLogo: inv('brand:logo'),
   lutImport: inv('lut:import'),
+  templatesList: inv('templates:list'),
+  templateSave: inv('templates:save'),
+  templateDelete: inv('templates:delete'),
+  libraryGet: inv('library:get'),
+  libraryHas: inv('library:has'),
 
   probe: inv('media:probe'),
   thumb: inv('media:thumb'),

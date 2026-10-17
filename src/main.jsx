@@ -11,9 +11,11 @@ import * as render from './engine/render.js';
 import * as audioai from './editor/audioai.js';
 import * as gl from './engine/gl.js';
 import * as vision from './editor/vision.js';
+import * as animated from './engine/animated.js';
+import * as library from './editor/library.js';
 import './styles.css';
 
 // Automation hook used by the end-to-end test script.
-window.__velvix = { store, actions, captions, transcript, model, sources, render, audioai, gl, vision };
+window.__velvix = { store, actions, captions, transcript, model, sources, render, audioai, gl, vision, animated, library };
 
 createRoot(document.getElementById('root')).render(<App />);

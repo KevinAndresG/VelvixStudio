@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useStore, getState, setState, undo, redo, update, flushSave, toast } from '../store.js';
 import { projectDuration, ASPECTS, uid, clipEnd } from '../engine/model.js';
-import { Icon, IconBtn, Select } from '../ui.jsx';
+import { Icon, IconBtn, Select, Modal } from '../ui.jsx';
 import MediaPanel from './MediaPanel.jsx';
 import Preview, { snapshotCanvas } from './Preview.jsx';
 import Timeline from './Timeline.jsx';
@@ -64,6 +64,15 @@ export default function Editor() {
   const jobs = useStore((s) => s.jobs);
   const [exporting, setExporting] = useState(false);
   const [help, setHelp] = useState(false);
+  const [tpl, setTpl] = useState(null); // name being typed for "save as template"
+  // The project (media, tracks, clips, look) as a reusable template, with the current frame as its picture.
+  const saveTemplate = async () => {
+    const p = getState().project, blob = await snapshotCanvas(160).catch(() => null);
+    const { id, name, createdAt, updatedAt, thumb, transcript, ...rest } = structuredClone(p);
+    await window.api.templateSave({ id: uid(), name: tpl.trim() || p.name, createdAt: Date.now(), project: rest }, blob ? await blob.arrayBuffer() : null);
+    setTpl(null);
+    toast('Plantilla guardada: aparece en el inicio');
+  };
 
   useEffect(() => {
     window.addEventListener('keydown', onKey);
@@ -112,6 +121,7 @@ export default function Editor() {
               {jobList[0][1].cancel && <button className="job-cancel" title="Cancelar" onClick={jobList[0][1].cancel}>✕</button>}
             </div>
           )}
+          <IconBtn icon="layers" title="Guardar como plantilla" className="save-tpl" onClick={() => setTpl(project.name)} />
           <IconBtn icon="keyboard" title="Atajos de teclado" onClick={() => setHelp(true)} />
           <button className="btn primary" onClick={() => setExporting(true)}><Icon name="download" size={16} /> Exportar</button>
         </div>
@@ -124,6 +134,13 @@ export default function Editor() {
       <Timeline />
       {exporting && <ExportDialog onClose={() => setExporting(false)} />}
       {help && <ShortcutHelp onClose={() => setHelp(false)} />}
+      {tpl != null && (
+        <Modal title="Guardar como plantilla" onClose={() => setTpl(null)} width={420}>
+          <p className="modal-text">Guarda el formato, las pistas, los textos, stickers, efectos y medios de este proyecto para empezar otros iguales desde el inicio.</p>
+          <input className="input tpl-name" autoFocus value={tpl} onChange={(e) => setTpl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && saveTemplate()} />
+          <div className="modal-actions"><button className="btn" onClick={() => setTpl(null)}>Cancelar</button><button className="btn primary" onClick={saveTemplate}>Guardar</button></div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
-  DEFAULT_TEXT, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
+  DEFAULT_TEXT, TEXT_GROUPS, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
   KF_PROPS, SPEED_CURVES, MAX_SPEED, EASES, EASE_NAMES, bezier, clamp, curveSpeed, trackOf, vidSrc, matteOn,
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
@@ -10,6 +10,7 @@ import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilent
 import { presetStyle } from './MediaPanel.jsx';
 import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
 import ColorTab from './ColorTab.jsx';
+import { BADGES, BADGE_THEMES } from '../engine/stickers.js';
 import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
@@ -65,7 +66,7 @@ function ClipPanel({ clip, project, count }) {
   const media = mediaOf(project, clip);
   const visual = clip.type === 'video' || clip.type === 'image';
   const tabs = {};
-  if (clip.type === 'text') Object.assign(tabs, { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
+  if (clip.type === 'text') Object.assign(tabs, clip.text.badge ? { badge: 'Sticker', anim: 'Animación', basic: 'Posición' } : { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
   if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', ai: 'IA', anim: 'Animación', speed: 'Velocidad' });
   if (clip.type === 'video' && media && (media.hasAudio || clip.fxPath)) tabs.audio = 'Audio';
   if (clip.type === 'audio') Object.assign(tabs, { audio: 'Audio', speed: 'Velocidad' });
@@ -84,6 +85,7 @@ function ClipPanel({ clip, project, count }) {
       <div className="insp-body">
         <EaseSection clip={clip} />
         {cur === 'text' && <TextTab clip={clip} edit={edit} />}
+        {cur === 'badge' && <BadgeTab clip={clip} edit={edit} />}
         {cur === 'style' && <StyleTab clip={clip} edit={edit} />}
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
         {cur === 'adjust' && <AdjustTab clip={clip} edit={edit} />}
@@ -543,8 +545,86 @@ function TextTab({ clip, edit }) {
         <Slider label="Espaciado" value={t.letterSpacing} min={-10} max={40} onChange={(v) => set('letterSpacing', v, 'ls')} reset={0} />
         <Slider label="Interlineado" value={t.lineHeight} min={0.7} max={3} step={0.05} onChange={(v) => set('lineHeight', v, 'lh')} reset={1.15} />
         <Slider label="Ancho máximo" value={Math.round(t.maxWidth * 100)} min={10} max={100} unit="%" onChange={(v) => set('maxWidth', v / 100, 'mw')} reset={85} />
+        <Slider label="Curva" value={t.curve || 0} min={-100} max={100} onChange={(v) => set('curve', v, 'curve')} reset={0} />
+        {!!t.curve && t.bg && t.bg.on && <p className="hint">El fondo de caja no se dibuja en texto curvo.</p>}
       </Section>
+      <WordStyles clip={clip} edit={edit} fonts={fonts} />
       {clip.caption && <button className="btn wide" onClick={() => applyToAll(clip.id, 'text')}>Aplicar estilo a todos los subtítulos</button>}
+    </>
+  );
+}
+
+// Per-word styles: pick words (click, Shift/Ctrl adds) and give them their own color, weight, size or font.
+function WordStyles({ clip, edit, fonts }) {
+  const t = clip.text, ws = t.wordStyles || {};
+  const words = (t.uppercase ? t.content.toUpperCase() : t.content).split(/\s+/).filter(Boolean);
+  const [sel, setSel] = useState([]);
+  const cur = sel.filter((i) => i < words.length);
+  const first = (cur.length && ws[cur[0]]) || {};
+  const setW = (patch, key) => edit((c) => {
+    const n = c.text.content.split(/\s+/).filter(Boolean).length, out = { ...(c.text.wordStyles || {}) };
+    for (const i of cur) if (i < n) {
+      const s = { ...(out[i] || {}), ...patch };
+      for (const k of Object.keys(s)) if (s[k] == null) delete s[k];
+      if (Object.keys(s).length) out[i] = s; else delete out[i];
+    }
+    c.text.wordStyles = out;
+  }, key);
+  const pick = (i, e) => setSel(e.shiftKey && cur.length ? Array.from({ length: Math.abs(i - cur[cur.length - 1]) + 1 }, (_, k) => Math.min(i, cur[cur.length - 1]) + k) : e.ctrlKey ? (cur.includes(i) ? cur.filter((x) => x !== i) : [...cur, i]) : [i]);
+  if (!words.length) return null;
+  return (
+    <Section title="Estilo por palabra" defaultOpen={Object.keys(ws).length > 0 || words.length <= 20}>
+      <div className="word-chips">
+        {words.map((w, i) => (
+          <button key={i} data-word={i} className={`${cur.includes(i) ? 'active' : ''} ${ws[i] ? 'styled' : ''}`} onClick={(e) => pick(i, e)}
+            style={ws[i] ? { color: ws[i].color, fontWeight: ws[i].bold ? 800 : ws[i].bold === false ? 400 : undefined, fontStyle: ws[i].italic ? 'italic' : undefined, textDecoration: ws[i].underline ? 'underline' : undefined } : null}>{w}</button>
+        ))}
+      </div>
+      {cur.length > 0 ? <>
+        <div className="row-btns">
+          <Color label="Color" value={first.color || t.color} onChange={(v) => setW({ color: v })} />
+          <button className={`btn sm fmt ${(first.bold ?? t.bold) ? 'active' : ''}`} onClick={() => setW({ bold: !(first.bold ?? t.bold) })}><b>B</b></button>
+          <button className={`btn sm fmt ${(first.italic ?? t.italic) ? 'active' : ''}`} onClick={() => setW({ italic: !(first.italic ?? t.italic) })}><i>I</i></button>
+          <button className={`btn sm fmt ${(first.underline ?? t.underline) ? 'active' : ''}`} onClick={() => setW({ underline: !(first.underline ?? t.underline) })}><u>U</u></button>
+        </div>
+        <Slider label="Tamaño" value={Math.round((first.scale || 1) * 100)} min={30} max={300} unit="%" onChange={(v) => setW({ scale: v === 100 ? null : v / 100 }, 'wscale')} reset={100} />
+        <label className="field select"><span>Fuente</span>
+          <select value={first.font || ''} onChange={(e) => setW({ font: e.target.value || null })}>
+            <option value="">Igual que el texto</option>
+            {fonts.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+          </select>
+        </label>
+        <button className="btn sm" onClick={() => setW({ color: null, bold: null, italic: null, underline: null, scale: null, font: null })}>Quitar estilo</button>
+      </> : <p className="hint">Haz clic en una palabra (Shift o Ctrl para varias) para darle otro color, tamaño o fuente.</p>}
+    </Section>
+  );
+}
+
+// Animated call-to-action sticker: kind, platform colors and the two labels (before / after the click).
+function BadgeTab({ clip, edit }) {
+  const t = clip.text, b = t.badge, def = BADGES[b.kind] || BADGES.subscribe;
+  const fonts = useFonts();
+  const set = (patch) => edit((c) => { c.text.badge = { ...c.text.badge, ...patch }; });
+  return (
+    <>
+      <Section title="Sticker animado">
+        <Select label="Tipo" value={b.kind} options={Object.fromEntries(Object.entries(BADGES).map(([k, v]) => [k, v.name]))}
+          onChange={(v) => edit((c) => { c.text.badge = { ...c.text.badge, kind: v, label2: undefined }; c.text.content = BADGES[v].label || ''; c.name = `Sticker ${BADGES[v].name}`; })} />
+        <div className="seg wrap badge-themes">
+          {Object.entries(BADGE_THEMES).map(([k, v]) => <button key={k} data-theme={k} className={b.theme === k ? 'active' : ''} onClick={() => set({ theme: k })}>{v.name}</button>)}
+        </div>
+        {def.label !== '' && <>
+          <label className="field"><span>Texto</span><input className="input" value={t.content} onChange={(e) => update((p) => { p.clips.find((c) => c.id === clip.id).text.content = e.target.value; }, 'txt-' + clip.id)} /></label>
+          {def.label2 && <label className="field"><span>Después del clic</span><input className="input" value={b.label2 ?? def.label2} onChange={(e) => update((p) => { const c = p.clips.find((x) => x.id === clip.id); c.text.badge = { ...c.text.badge, label2: e.target.value }; }, 'lbl2-' + clip.id)} /></label>}
+          <label className="field select"><span>Fuente</span>
+            <select value={t.font} onChange={(e) => edit((c) => { c.text.font = e.target.value; })} style={{ fontFamily: t.font }}>
+              {fonts.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+            </select>
+          </label>
+        </>}
+        <Slider label="Tamaño" value={t.size} min={20} max={300} onChange={(v) => edit((c) => { c.text.size = v; }, 'size')} />
+        <p className="hint">Se anima en bucle (cada 3 s){def.click ? ': un cursor pulsa el botón y cambia a «' + (b.label2 ?? def.label2 ?? '') + '»' : ''}. Muévelo y escálalo en el visor.</p>
+      </Section>
     </>
   );
 }
@@ -555,8 +635,8 @@ function StyleTab({ clip, edit }) {
   const applyPreset = (p) => edit((c) => {
     const keep = { content: c.text.content, font: c.text.font, size: p.t.size || c.text.size };
     c.text = { ...c.text, ...structuredClone(p.t), ...keep };
-    for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(p.t[k] || {}) };
-    c.text.wordAnim = p.t.wordAnim || 'none';
+    for (const k of TEXT_GROUPS) c.text[k] = { ...DEFAULT_TEXT[k], ...(p.t[k] || {}) };
+    c.text.wordAnim = p.t.wordAnim || 'none'; c.text.curve = p.t.curve || 0;
   });
   return (
     <>
@@ -585,6 +665,15 @@ function StyleTab({ clip, edit }) {
           <Slider label="Opacidad" value={t.bg.opacity} min={0} max={100} unit="%" onChange={(v) => sub('bg', 'opacity', v, 'bgo')} />
           <Slider label="Redondeo" value={t.bg.radius} min={0} max={80} onChange={(v) => sub('bg', 'radius', v, 'bgr')} />
           <Slider label="Relleno" value={t.bg.pad} min={0} max={80} onChange={(v) => sub('bg', 'pad', v, 'bgp')} />
+        </>}
+      </Section>
+      <Section title="Texto 3D" defaultOpen={!!(t.depth && t.depth.on)}>
+        <Toggle label="Activar" value={!!(t.depth && t.depth.on)} onChange={(v) => edit((c) => { c.text.depth = { ...DEFAULT_TEXT.depth, ...c.text.depth, on: v }; })} />
+        {t.depth && t.depth.on && <>
+          <Color label="Color del volumen" value={t.depth.color} onChange={(v) => sub('depth', 'color', v)} />
+          <Slider label="Profundidad" value={t.depth.size} min={1} max={60} onChange={(v) => sub('depth', 'size', v, 'dps')} reset={14} />
+          <Slider label="Dirección" value={t.depth.angle} min={-180} max={180} unit="°" onChange={(v) => sub('depth', 'angle', v, 'dpa')} reset={50} />
+          <Toggle label="Sombreado" value={t.depth.shade !== false} onChange={(v) => sub('depth', 'shade', v)} />
         </>}
       </Section>
       <Section title="Brillo (neón)" defaultOpen={t.glow.on}>

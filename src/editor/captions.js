@@ -1,5 +1,5 @@
 import { getState, update, setState, toast, setJob } from '../store.js';
-import { newClip, newTrack, uid, projectDuration, DEFAULT_TEXT, TEXT_PRESETS } from '../engine/model.js';
+import { newClip, newTrack, uid, projectDuration, DEFAULT_TEXT, TEXT_PRESETS, TEXT_GROUPS } from '../engine/model.js';
 import { audioSegments } from '../engine/sources.js';
 import { applyVocab, parseVocab, getVocab, addCaptionEmojis, setCaptionContent, isEmoji } from './transcript.js';
 
@@ -53,7 +53,7 @@ export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
       const start = line[0].s, end = Math.max(line[line.length - 1].e, start + 0.3);
       const c = newClip('text', { name: 'Subtítulo', start, duration: end - start, trackId: tk.id, caption: true });
       c.text = { ...structuredClone(DEFAULT_TEXT), ...structuredClone(preset), content: line.map((w) => w.text).join(' '), size: portrait ? 70 : 60 };
-      for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
+      for (const k of TEXT_GROUPS) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
       c.transform.y = portrait ? 0.18 : 0.36;
       c.words = line.map((w) => ({ text: w.text, s: w.s - start, e: w.e - start }));
       d.clips.push(c);
@@ -180,8 +180,8 @@ export function restyleCaptions(styleIndex) {
     for (const c of d.clips) if (c.caption) {
       const content = c.text.content, size = c.text.size;
       c.text = { ...c.text, ...structuredClone(preset), content, size: preset.size ? c.text.size : size };
-      for (const k of ['stroke', 'shadow', 'bg', 'glow', 'gradient', 'highlight', 'keyword']) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
-      c.text.wordAnim = preset.wordAnim || 'none';
+      for (const k of TEXT_GROUPS) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
+      c.text.wordAnim = preset.wordAnim || 'none'; c.text.curve = preset.curve || 0;
     }
   });
 }

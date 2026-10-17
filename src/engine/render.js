@@ -1,6 +1,7 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
 import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword, sourceTime, vidSrc, matteOn } from './model.js';
 import { grade, needsGrade, matteFrame } from './gl.js';
+import { drawBadge, badgeSize } from './stickers.js';
 
 // ---------- scratch canvases ----------
 const pool = new Map();
@@ -211,31 +212,85 @@ function wrapLines(x, text, maxW) {
   return out;
 }
 
+const hasKeys = (o) => !!o && Object.keys(o).length > 0;
+export const fontOf = (tx, size, st) => `${(st && st.italic != null ? st.italic : tx.italic) ? 'italic ' : ''}${(st && st.bold != null ? st.bold : tx.bold) ? '700' : '400'} ${size * ((st && st.scale) || 1)}px "${(st && st.font) || tx.font}", "Segoe UI Emoji", sans-serif`;
+
+// Lines of a text clip. Plain text wraps whole lines; with per-word styles each word is measured in its own font.
+// line = { str, w, h, words: [{ text, wi, x, w, st }] } (x from the line start), wi = index among all words.
+function layoutText(x, tx, content, maxW, size, lh) {
+  const ws = hasKeys(tx.wordStyles) ? tx.wordStyles : null, base = fontOf(tx, size);
+  x.font = base;
+  const space = x.measureText(' ').width, lines = [];
+  let wi = 0;
+  const finish = (words) => {
+    let cx = 0;
+    for (const w of words) { w.x = cx; cx += w.w + space; }
+    const sc = Math.max(1, ...words.map((w) => (w.st && w.st.scale) || 1));
+    lines.push({ words, w: Math.max(0, cx - space), h: lh * sc, str: words.map((w) => w.text).join(' ') });
+  };
+  const measure = (text, st) => { if (!st) return x.measureText(text).width; x.font = fontOf(tx, size, st); const m = x.measureText(text).width; x.font = base; return m; };
+  if (!ws) {
+    for (const str of wrapLines(x, content, maxW)) {
+      const words = str.split(' ').filter(Boolean).map((text) => ({ text, wi: wi++, w: x.measureText(text).width, st: null }));
+      finish(words);
+      lines[lines.length - 1].w = x.measureText(str).width; lines[lines.length - 1].str = str;
+    }
+    return lines;
+  }
+  for (const para of String(content).split('\n')) {
+    let cur = [], cw = 0;
+    for (const text of para.split(' ').filter(Boolean)) {
+      const st = ws[wi] || null, w = measure(text, st), item = { text, wi: wi++, w, st };
+      if (cur.length && cw + space + w > maxW) { finish(cur); cur = []; cw = 0; }
+      cw += (cur.length ? space : 0) + w; cur.push(item);
+    }
+    finish(cur);
+  }
+  return lines;
+}
+
+// Curved text: flat point (fx along the line, fy offset from the center line) → point on a circle and its tangent angle.
+// curve > 0 arches up (∩), < 0 bends down (∪); ±100 wraps the widest line around a full circle.
+function arcMap(curve, width) {
+  if (!curve) return null;
+  const R = Math.max(1, width) / ((Math.abs(curve) / 100) * Math.PI * 2), up = curve > 0;
+  return (fx, fy) => {
+    const a = fx / R;
+    return up ? [(R - fy) * Math.sin(a), R - (R - fy) * Math.cos(a), a] : [(R + fy) * Math.sin(a), (R + fy) * Math.cos(a) - R, -a];
+  };
+}
+
+function textModel(x, clip, t, W, H, scale) {
+  const tx = clip.text, k = Math.min(W, H) / 1080, size = tx.size * k;
+  const content = tx.uppercase ? tx.content.toUpperCase() : tx.content;
+  x.font = fontOf(tx, size);
+  x.letterSpacing = `${(tx.letterSpacing || 0) * k}px`;
+  const lh = size * (tx.lineHeight || 1.15);
+  const lines = layoutText(x, tx, content, ((tx.maxWidth || 0.85) * W) / Math.max(0.05, scale), size, lh);
+  const bw = Math.max(0, ...lines.map((l) => l.w)), bh = lines.reduce((a, l) => a + l.h, 0);
+  let y = -bh / 2;
+  for (const l of lines) { l.y = y + l.h / 2; y += l.h; l.x0 = tx.align === 'left' ? -bw / 2 : tx.align === 'right' ? bw / 2 - l.w : -l.w / 2; }
+  return { tx, k, size, content, lh, lines, bw, bh, arc: arcMap(tx.curve || 0, bw) };
+}
+
 export function drawText(ctx, clip, t, W, H) {
   const tx = clip.text, local = t - clip.start;
   const tr = transformAt(clip, t), st = animState(clip.anim, clamp(local, 0, clip.duration), clip.duration);
   const opacity = clamp(tr.opacity * st.opacity, 0, 1);
-  if (opacity <= 0 || !tx.content) return;
-  const k = Math.min(W, H) / 1080, size = tx.size * k;
-  let content = tx.uppercase ? tx.content.toUpperCase() : tx.content;
+  if (opacity <= 0 || (!tx.content && !tx.badge)) return;
   const x = ctx;
   x.save();
-  x.font = `${tx.italic ? 'italic ' : ''}${tx.bold ? '700' : '400'} ${size}px "${tx.font}", "Segoe UI Emoji", sans-serif`;
-  x.letterSpacing = `${(tx.letterSpacing || 0) * k}px`;
-  x.textBaseline = 'middle';
-  const lines = wrapLines(x, content, (tx.maxWidth || 0.85) * W / Math.max(0.05, tr.scale * st.scale));
-  const lh = size * (tx.lineHeight || 1.15);
-  const widths = lines.map((l) => x.measureText(l).width);
-  const bw = Math.max(...widths), bh = lh * lines.length;
-
   x.translate(W / 2 + (tr.x + st.dx) * W, H / 2 + (tr.y + st.dy) * H);
   x.rotate(((tr.rotation + st.rot) * Math.PI) / 180);
   const s = tr.scale * st.scale;
   x.scale(s * (tr.flipH ? -1 : 1), s * (tr.flipV ? -1 : 1));
   x.globalAlpha = opacity;
   if (st.blur > 0) x.filter = `blur(${((st.blur * W) / 1920).toFixed(1)}px)`;
+  if (tx.badge) { drawBadge(x, tx, local, tx.size * (Math.min(W, H) / 1080)); x.restore(); return; }
+  const M = textModel(x, clip, t, W, H, tr.scale * st.scale), { k, size, content, lh, lines, bw, bh, arc } = M;
+  x.textBaseline = 'middle';
 
-  if (tx.bg && tx.bg.on) {
+  if (tx.bg && tx.bg.on && !arc) {
     const pad = (tx.bg.pad ?? 18) * k;
     x.save();
     x.globalAlpha = opacity * ((tx.bg.opacity ?? 100) / 100);
@@ -244,13 +299,14 @@ export function drawText(ctx, clip, t, W, H) {
     x.restore();
   }
 
-  // Unit list: each unit draws independently so per-letter/word animations and karaoke work.
+  // Unit list: each unit draws independently so per-letter/word animations, karaoke, word styles and curves work.
   const totalChars = content.replace(/\n/g, '').length;
   const wordAnim = tx.wordAnim && tx.wordAnim !== 'none' ? tx.wordAnim : null, kw = tx.keyword && tx.keyword.on;
-  const perUnit = st.unitAnim || st.units === 'wave' || st.reveal < 1 || (tx.highlight && tx.highlight.on) || wordAnim || kw;
-  const byWord = st.unitAnim === 'wordsUp' || (tx.highlight && tx.highlight.on) || wordAnim || kw;
+  const styled = hasKeys(tx.wordStyles);
+  const byWord = st.unitAnim === 'wordsUp' || (tx.highlight && tx.highlight.on) || wordAnim || kw || styled;
+  const perUnit = byWord || st.unitAnim || st.units === 'wave' || st.reveal < 1 || arc;
+  const perChar = arc || (!byWord && perUnit); // curves bend each letter; letter animations stagger letters
   const words = clip.words; // [{ s, e }] seconds relative to clip, for karaoke
-  let unitIndex = 0, charIndex = 0;
   const rawWords = tx.content.split(/\s+/).filter(Boolean), totalWords = rawWords.length;
   // Speech-timed word start (falls back to an even spread when there are no word timings).
   const wordStart = (i) => (words && words[i] ? words[i].s : (i / Math.max(1, totalWords)) * clip.duration * 0.8);
@@ -259,15 +315,16 @@ export function drawText(ctx, clip, t, W, H) {
     if (words && words.length) activeWord = words.findIndex((w) => local >= w.s && local < w.e);
     else activeWord = Math.floor((local / clip.duration) * totalWords);
   }
-
-  const fillFor = (lineY) => {
+  const dep = tx.depth && tx.depth.on && tx.depth.size > 0 ? tx.depth : null;
+  const fillFor = (h) => {
     if (tx.gradient && tx.gradient.on) {
-      const g = x.createLinearGradient(0, lineY - lh / 2, 0, lineY + lh / 2);
+      const g = x.createLinearGradient(0, -h / 2, 0, h / 2);
       g.addColorStop(0, tx.gradient.from); g.addColorStop(1, tx.gradient.to); return g;
     }
     return tx.color;
   };
-  const paint = (str, px, py, color) => {
+  // ang: rotation of the glyph frame (curves), so the 3D extrusion keeps one direction on screen.
+  const paint = (str, px, py, color, sz, ang = 0, underline = tx.underline) => {
     if (tx.glow && tx.glow.on) {
       x.save(); x.shadowColor = tx.glow.color; x.shadowBlur = tx.glow.size * k; x.fillStyle = tx.glow.color;
       x.fillText(str, px, py); x.fillText(str, px, py); x.restore();
@@ -277,75 +334,123 @@ export function drawText(ctx, clip, t, W, H) {
       x.fillStyle = tx.shadow.color; if (tx.shadow.blur === 0) x.fillText(str, px + tx.shadow.x * k, py + tx.shadow.y * k); else x.fillText(str, px, py);
       x.restore();
     }
-    if (tx.stroke && tx.stroke.on && tx.stroke.width > 0) {
-      x.save(); x.lineJoin = 'round'; x.miterLimit = 2; x.strokeStyle = tx.stroke.color; x.lineWidth = tx.stroke.width * k * 2;
-      x.strokeText(str, px, py); x.restore();
-    }
-    x.fillStyle = color; x.fillText(str, px, py);
-    if (tx.underline) { const m = x.measureText(str).width; x.fillRect(px, py + size * 0.42, m, Math.max(2, size * 0.06)); }
-  };
-
-  lines.forEach((line, li) => {
-    const y = -bh / 2 + lh * (li + 0.5);
-    const lw = widths[li];
-    const x0 = tx.align === 'left' ? -bw / 2 : tx.align === 'right' ? bw / 2 - lw : -lw / 2;
-    x.textAlign = 'left';
-    const fill = fillFor(y);
-    if (!perUnit) { paint(line, x0, y, fill); charIndex += line.length; return; }
-    const units = byWord ? line.split(/(\s+)/) : Array.from(line);
-    let prefix = '';
-    for (const u of units) {
-      const ux = x0 + x.measureText(prefix).width;
-      prefix += u;
-      if (!u.trim()) { charIndex += u.length; continue; }
-      const idx = unitIndex++;
-      const count = byWord ? totalWords : totalChars;
-      charIndex += u.length;
-      if (st.reveal < 1 && charIndex > Math.ceil(st.reveal * totalChars)) continue;
-      x.save();
-      let uy = y, ua = 1;
-      if (st.unitAnim) {
-        const stagger = 0.6, local01 = clamp((st.unitP * (1 + stagger) - (idx / Math.max(1, count)) * stagger), 0, 1);
-        ua = local01;
-        if (st.unitAnim === 'wordsUp') uy += (1 - easeOut(local01)) * size * 0.8;
-        else uy -= (1 - easeOut(local01)) * size * 0.4;
+    const sw = tx.stroke && tx.stroke.on && tx.stroke.width > 0 ? tx.stroke.width * k * 2 : 0;
+    if (dep) {
+      // 3D: the text extruded backwards as stacked copies (darkening towards the back), then the face on top.
+      const n = dep.size * k, a = ((dep.angle ?? 45) * Math.PI) / 180 - ang, step = Math.max(1, n / 36);
+      x.save(); x.lineJoin = 'round'; x.lineWidth = sw;
+      for (let d = n; d > 0; d -= step) {
+        const ox = Math.cos(a) * d, oy = Math.sin(a) * d;
+        x.fillStyle = x.strokeStyle = shade(dep.color, dep.shade === false ? 0 : (d / n) * 0.45);
+        if (sw) x.strokeText(str, px + ox, py + oy);
+        x.fillText(str, px + ox, py + oy);
       }
-      if (st.units === 'wave') uy += Math.sin(st.loopT * 6 - idx * 0.5) * size * 0.12;
-      let ux2 = ux;
-      if (wordAnim && byWord) {
-        const wp = clamp((local - wordStart(idx)) / 0.25, 0, 1);
-        if (wp <= 0) { x.restore(); continue; }
-        const m = x.measureText(u).width, q = easeOut(wp);
-        if (wordAnim === 'pop') { const sc = wp < 0.6 ? lerp(0.4, 1.18, wp / 0.6) : lerp(1.18, 1, (wp - 0.6) / 0.4); x.translate(ux + m / 2, uy); x.scale(sc, sc); x.translate(-(ux + m / 2), -uy); ua *= Math.min(1, wp * 3); }
-        else if (wordAnim === 'bounce') { uy -= Math.abs(Math.sin(wp * Math.PI * 2)) * (1 - wp) * size * 0.5; ua *= Math.min(1, wp * 3); }
-        else if (wordAnim === 'slide') { ux2 -= (1 - q) * size * 0.7; ua *= q; }
-        else ua *= q;
-      }
-      x.globalAlpha = opacity * ua;
-      let color = fill;
-      if (kw && byWord && isKeyword(rawWords[idx] || u)) color = tx.keyword.color;
-      if (activeWord >= 0 && byWord && idx === activeWord) {
-        color = tx.highlight.color;
-        const m = x.measureText(u).width;
-        x.translate(ux + m / 2, uy); x.scale(1.08, 1.08); x.translate(-(ux + m / 2), -uy);
-      }
-      paint(u, ux2, uy, color);
       x.restore();
     }
-  });
+    if (sw) { x.save(); x.lineJoin = 'round'; x.miterLimit = 2; x.strokeStyle = tx.stroke.color; x.lineWidth = sw; x.strokeText(str, px, py); x.restore(); }
+    x.fillStyle = color; x.fillText(str, px, py);
+    if (underline) { const m = x.measureText(str).width; x.fillRect(px, py + sz * 0.42, m, Math.max(2, sz * 0.06)); }
+  };
+  // One glyph run centered at flat (fx, fy), scaled sc around its own center.
+  const glyph = (str, fx, fy, color, sz, sc, ul) => {
+    x.save();
+    const [px, py, ang] = arc ? arc(fx, fy) : [fx, fy, 0];
+    x.translate(px, py); if (ang) x.rotate(ang); if (sc !== 1) x.scale(sc, sc);
+    const m = x.measureText(str).width;
+    paint(str, -m / 2, 0, color === null ? fillFor(sz * (tx.lineHeight || 1.15)) : color, sz, ang, ul);
+    x.restore();
+  };
+
+  let charIndex = 0, letter = 0;
+  const base = fontOf(tx, size);
+  x.textAlign = 'left';
+  for (const line of lines) {
+    const y = line.y;
+    if (!perUnit) { x.font = base; paint(line.str, line.x0, y, fillFor(lh), size); charIndex += line.str.length; continue; }
+    for (const w of line.words) {
+      const wst = w.st, idx = w.wi, sz = size * ((wst && wst.scale) || 1);
+      x.font = wst ? fontOf(tx, size, wst) : base;
+      const wordEnd = charIndex + w.text.length;
+      let wy = y, wx = 0, ua = 1, sc = 1;
+      if (st.unitAnim === 'wordsUp' || (st.unitAnim && byWord)) {
+        const stagger = 0.6, p = clamp(st.unitP * (1 + stagger) - (idx / Math.max(1, totalWords)) * stagger, 0, 1);
+        ua = p; wy += st.unitAnim === 'wordsUp' ? (1 - easeOut(p)) * size * 0.8 : -(1 - easeOut(p)) * size * 0.4;
+      }
+      if (st.units === 'wave' && byWord) wy += Math.sin(st.loopT * 6 - idx * 0.5) * size * 0.12;
+      if (wordAnim) {
+        const wp = clamp((local - wordStart(idx)) / 0.25, 0, 1);
+        if (wp <= 0) { charIndex = wordEnd + 1; letter += w.text.length; continue; }
+        const q = easeOut(wp);
+        if (wordAnim === 'pop') { sc = wp < 0.6 ? lerp(0.4, 1.18, wp / 0.6) : lerp(1.18, 1, (wp - 0.6) / 0.4); ua *= Math.min(1, wp * 3); }
+        else if (wordAnim === 'bounce') { wy -= Math.abs(Math.sin(wp * Math.PI * 2)) * (1 - wp) * size * 0.5; ua *= Math.min(1, wp * 3); }
+        else if (wordAnim === 'slide') { wx -= (1 - q) * size * 0.7; ua *= q; }
+        else ua *= q;
+      }
+      let color = wst && wst.color ? wst.color : null;
+      if (kw && isKeyword(rawWords[idx] || w.text)) color = tx.keyword.color;
+      if (activeWord >= 0 && idx === activeWord) { color = tx.highlight.color; sc *= 1.08; }
+      const ul = wst && wst.underline != null ? wst.underline : tx.underline;
+      const cx = line.x0 + w.x + w.w / 2 + wx;
+      if (!perChar) {
+        if (st.reveal < 1 && wordEnd > Math.ceil(st.reveal * totalChars)) { charIndex = wordEnd + 1; continue; }
+        x.globalAlpha = opacity * ua;
+        glyph(w.text, cx, wy, color, sz, sc, ul);
+      } else {
+        let prefix = '';
+        for (const ch of Array.from(w.text)) {
+          const off = x.measureText(prefix).width, cw = x.measureText(ch).width;
+          prefix += ch; charIndex += ch.length;
+          const li = letter++;
+          if (st.reveal < 1 && charIndex > Math.ceil(st.reveal * totalChars)) continue;
+          let cy = wy, ca = ua;
+          if (st.unitAnim && !byWord) {
+            const stagger = 0.6, p = clamp(st.unitP * (1 + stagger) - (li / Math.max(1, totalChars)) * stagger, 0, 1);
+            ca = p; cy += st.unitAnim === 'wordsUp' ? (1 - easeOut(p)) * size * 0.8 : -(1 - easeOut(p)) * size * 0.4;
+          }
+          if (st.units === 'wave' && !byWord) cy += Math.sin(st.loopT * 6 - li * 0.5) * size * 0.12;
+          x.globalAlpha = opacity * ca;
+          // Letters keep their place inside the (scaled) word.
+          const fx = cx + (line.x0 + w.x + wx + off + cw / 2 - cx) * sc;
+          glyph(ch, fx, cy, color, sz, sc, ul);
+        }
+        charIndex = wordEnd;
+      }
+      charIndex = wordEnd + 1;
+    }
+  }
   x.restore();
+}
+// Mixes a hex color towards black by amount 0..1.
+function shade(hex, amt) {
+  const m = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})/i.exec(hex || '#000000');
+  if (!m) return hex;
+  const f = (h) => Math.round(parseInt(h, 16) * (1 - amt));
+  return `rgb(${f(m[1])},${f(m[2])},${f(m[3])})`;
 }
 
 // Bounding box of a text clip in canvas pixels (for on-canvas selection handles).
 export function textBounds(ctx, clip, t, W, H) {
-  const tx = clip.text, k = Math.min(W, H) / 1080, size = tx.size * k, tr = transformAt(clip, t);
+  const tx = clip.text, tr = transformAt(clip, t);
   ctx.save();
-  ctx.font = `${tx.italic ? 'italic ' : ''}${tx.bold ? '700' : '400'} ${size}px "${tx.font}", sans-serif`;
-  ctx.letterSpacing = `${(tx.letterSpacing || 0) * k}px`;
-  const lines = wrapLines(ctx, tx.uppercase ? tx.content.toUpperCase() : tx.content, (tx.maxWidth || 0.85) * W / Math.max(0.05, tr.scale));
-  const bw = Math.max(1, ...lines.map((l) => ctx.measureText(l).width)), bh = size * (tx.lineHeight || 1.15) * lines.length;
+  let w, h, ox = 0, oy = 0;
+  if (tx.badge) ({ w, h } = badgeSize(ctx, tx, tx.size * (Math.min(W, H) / 1080)));
+  else {
+    const M = textModel(ctx, clip, t, W, H, tr.scale);
+    w = Math.max(1, M.bw); h = M.bh;
+    if (M.arc) {
+      // Curved: box around the ends and middle of every line, a line height above and below.
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (const l of M.lines) for (const f of [0, 0.25, 0.5, 0.75, 1]) for (const d of [-l.h / 2, l.h / 2]) {
+        const [px, py] = M.arc(l.x0 + l.w * f, l.y + d);
+        x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+      }
+      w = x1 - x0; h = y1 - y0; ox = (x0 + x1) / 2; oy = (y0 + y1) / 2;
+    }
+    if (tx.depth && tx.depth.on) { const n = tx.depth.size * M.k, a = ((tx.depth.angle ?? 45) * Math.PI) / 180; w += Math.abs(Math.cos(a)) * n; h += Math.abs(Math.sin(a)) * n; ox += (Math.cos(a) * n) / 2; oy += (Math.sin(a) * n) / 2; }
+  }
   ctx.restore();
-  return { cx: W / 2 + tr.x * W, cy: H / 2 + tr.y * H, w: bw * tr.scale, h: bh * tr.scale, rotation: tr.rotation };
+  const r = (tr.rotation * Math.PI) / 180, s = tr.scale;
+  return { cx: W / 2 + tr.x * W + (ox * Math.cos(r) - oy * Math.sin(r)) * s, cy: H / 2 + tr.y * H + (ox * Math.sin(r) + oy * Math.cos(r)) * s, w: w * s, h: h * s, rotation: tr.rotation };
 }
 
 export function visualBounds(clip, t, drawable, W, H) {
@@ -549,7 +654,7 @@ function applyEffect(ctx, eff, local, dur, W, H) {
 }
 
 // ---------- full frame ----------
-// getDrawable(clip, sourceTime) → { el, w, h } | null. Returns list of clips drawn (for selection handles).
+// getDrawable(clip, media, t) → { el, w, h } | null. Returns list of clips drawn (for selection handles).
 export function activeVisual(project, t) {
   const out = [];
   const tracks = project.tracks.filter((tk) => tk.kind !== 'audio' && !tk.hidden);
@@ -595,7 +700,7 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       continue;
     }
     const media = mediaOf(project, c);
-    const d = getDrawable(c, media);
+    const d = getDrawable(c, media, t);
     const bgFor = (clip, dr) => { if (it.track.main && project.background.type === 'blur') drawBackground(ctx, project.background, dr, W, H); };
     // Transition into this clip from the previous one (centered on the cut).
     const inTrans = it.tin > 0 && t < c.start + it.tin;
@@ -604,7 +709,7 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       const A = inTrans ? it.prev : c, B = inTrans ? c : it.next;
       const tr = B.transition, half = tr.duration / 2, cut = B.start;
       const p = clamp((t - (cut - half)) / tr.duration, 0, 1);
-      const dA = getDrawable(A, mediaOf(project, A)), dB = getDrawable(B, mediaOf(project, B));
+      const dA = getDrawable(A, mediaOf(project, A), t), dB = getDrawable(B, mediaOf(project, B), t);
       bgFor(A, p < 0.5 ? dA : dB);
       const la = cloneLayer(drawVisual(ctx, A, t, dA, W, H, { layer: true, layerKey: 'tA', media: mediaOf(project, A) }), 'tA2', W, H);
       const lb = drawVisual(ctx, B, t, dB, W, H, { layer: true, layerKey: 'tB', media: mediaOf(project, B) });
