@@ -23,7 +23,7 @@ const overlaps = (p, trackId, start, end, ignore = []) =>
 export function ensureTrack(p, kind, start, end, ignore = []) {
   const candidates = p.tracks.filter((t) => t.kind === kind && !t.main && !t.locked);
   for (const t of kind === 'audio' ? candidates : [...candidates].reverse()) if (!overlaps(p, t.id, start, end, ignore)) return t.id;
-  const t = newTrack(kind, `${{ video: 'Superposición', audio: 'Audio', text: 'Texto', effect: 'Efectos' }[kind]} ${candidates.length + 1}`);
+  const t = newTrack(kind, trackName(p, kind));
   if (kind === 'audio') p.tracks.push(t);
   else {
     // Keep text/effects above overlay video: effects top, then text, then overlay video above main.
@@ -35,6 +35,7 @@ export function ensureTrack(p, kind, start, end, ignore = []) {
   return t.id;
 }
 export const mainTrack = (p) => p.tracks.find((t) => t.main);
+export const trackName = (p, kind) => `${{ video: 'Superposición', audio: 'Audio', text: 'Texto', effect: 'Efectos' }[kind]} ${p.tracks.filter((t) => t.kind === kind && !t.main).length + 1}`;
 
 // Magnetic main track: clips sit back to back with no gaps.
 export function packMain(p) {
@@ -125,6 +126,20 @@ export async function reprobeMedia() {
     if (!fixed.proxy && (fixed.sar !== 1 || !PLAYABLE.includes(fixed.vcodec))) prepareMedia(fixed, uid(), !!m.reversed);
   }
 }
+
+// Removes media from the project together with the clips that use it (one undo step). Files on disk are kept.
+export function removeMedia(ids) {
+  if (!ids.length) return;
+  const gone = new Set(proj().clips.filter((c) => ids.includes(c.mediaId)).map((c) => c.id));
+  update((p) => {
+    p.media = p.media.filter((m) => !ids.includes(m.id));
+    p.clips = p.clips.filter((c) => !gone.has(c.id));
+    packMain(p); cleanupTracks(p);
+  });
+  if (gone.size) setState({ selection: getState().selection.filter((id) => !gone.has(id)) });
+  toast(`${ids.length === 1 ? 'Archivo eliminado' : `${ids.length} archivos eliminados`} del proyecto (Ctrl+Z para deshacer)`);
+}
+export const unusedMedia = (p) => p.media.filter((m) => !p.clips.some((c) => c.mediaId === m.id));
 
 export async function importDialog() {
   const paths = await api.openMedia();

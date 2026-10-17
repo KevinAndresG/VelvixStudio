@@ -683,6 +683,15 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   }
   if (v7.status !== 0 && fails.length === n7) fails.push(`verify7 terminó con código ${v7.status} ${(v7.stderr || '').slice(-300)}`);
 
+  // ---------- v1.7.1: eliminar multimedia y mover un efecto a su propia pista ----------
+  const nm = fails.length;
+  const vm = cp3.spawnSync(process.execPath, [path.join(__dirname, 'mediafx.cjs')], { env: process.env, encoding: 'utf8', timeout: 300000 });
+  for (const line of (vm.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('mediafx ' + line);
+  }
+  if (vm.status !== 0 && fails.length === nm) fails.push(`mediafx terminó con código ${vm.status} ${(vm.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);

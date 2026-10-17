@@ -3,8 +3,8 @@ import { useStore, getState, update, toast } from '../store.js';
 import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER, DEFAULT_TEXT } from '../engine/model.js';
 import { BADGES, BADGE_THEMES, drawBadge, badgeSize } from '../engine/stickers.js';
 import { cssFilter } from '../engine/render.js';
-import { Icon, IconBtn, Select, Slider, Toggle } from '../ui.jsx';
-import { importDialog, importPaths, addToTimeline, addText, addSticker, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia } from './actions.js';
+import { Icon, IconBtn, Select, Slider, Toggle, Modal } from '../ui.jsx';
+import { importDialog, importPaths, addToTimeline, addText, addSticker, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia, removeMedia, unusedMedia } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
 import { neuralTTS, NEURAL_LANGS } from './audioai.js';
@@ -17,6 +17,25 @@ const TABS = [
   ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
   ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'], ['ai', 'wand', 'IA'], ['brand', 'diamond', 'Marca'],
 ];
+
+// Delete buttons call askRemove(ids): media used on the timeline asks first, unused media goes straight away (undo restores it).
+let askRemove = () => {};
+function RemoveMediaModal() {
+  const [ids, setIds] = useState(null);
+  askRemove = (list) => {
+    const p = getState().project;
+    if (p.clips.some((c) => list.includes(c.mediaId))) setIds(list); else removeMedia(list);
+  };
+  if (!ids) return null;
+  const p = getState().project, n = p.clips.filter((c) => ids.includes(c.mediaId)).length;
+  const name = ids.length === 1 ? (p.media.find((m) => m.id === ids[0]) || {}).name : `${ids.length} archivos`;
+  return (
+    <Modal title="Eliminar del proyecto" onClose={() => setIds(null)} width={440}>
+      <p className="modal-text"><b>{name}</b> se usa en {n === 1 ? '1 clip' : `${n} clips`} de la línea de tiempo. Al eliminarlo también se quitan esos clips. Tu archivo original no se borra y puedes deshacerlo con Ctrl+Z.</p>
+      <div className="modal-actions"><button className="btn" onClick={() => setIds(null)}>Cancelar</button><button className="btn danger confirm-remove-media" onClick={() => { removeMedia(ids); setIds(null); }}>Eliminar</button></div>
+    </Modal>
+  );
+}
 
 export default function MediaPanel() {
   const [tab, setTab] = useState('media');
@@ -43,6 +62,7 @@ export default function MediaPanel() {
         {tab === 'ai' && <VisionTab />}
         {tab === 'brand' && <BrandTab />}
       </div>
+      <RemoveMediaModal />
     </aside>
   );
 }
@@ -67,6 +87,7 @@ function MediaCard({ m }) {
         {m.missing
           ? <button className="mc-add relink" onClick={relink} title="Archivo no encontrado: volver a vincular"><Icon name="link" size={14} /></button>
           : <button className="mc-add" onClick={() => addToTimeline(m)} title="Agregar a la línea de tiempo"><Icon name="plus" size={14} /></button>}
+        <button className="mc-del" onClick={(e) => { e.stopPropagation(); askRemove([m.id]); }} title="Eliminar del proyecto"><Icon name="trash" size={13} /></button>
       </div>
       <span className="mc-name">{m.name}</span>
     </div>
@@ -77,6 +98,7 @@ function MediaTab() {
   const media = useStore((s) => s.project.media);
   const [filter, setFilter] = useState('all');
   const shown = media.filter((m) => filter === 'all' || m.type === filter);
+  const unused = useStore((s) => s.project.media.filter((m) => !s.project.clips.some((c) => c.mediaId === m.id)).length);
   return (
     <div className="panel">
       <button className="btn primary wide" onClick={importDialog}><Icon name="upload" size={16} /> Importar</button>
@@ -93,6 +115,7 @@ function MediaTab() {
         onDrop={(e) => { e.preventDefault(); const f = [...e.dataTransfer.files].map((x) => window.api.pathForFile(x)).filter(Boolean); if (f.length) importPaths(f); }}>
         {shown.map((m) => <MediaCard key={m.id} m={m} />)}
       </div>
+      {unused > 0 && <button className="btn wide remove-unused" onClick={() => askRemove(unusedMedia(getState().project).map((m) => m.id))}><Icon name="trash" size={15} /> Eliminar los no usados ({unused})</button>}
     </div>
   );
 }
@@ -159,6 +182,7 @@ function AudioTab() {
           <div key={m.id} className="audio-row" draggable onDragStart={(e) => e.dataTransfer.setData('velvix/media', m.id)} onDoubleClick={() => addToTimeline(m)}>
             <Icon name="music" size={16} /><span>{m.name}</span><em>{fmtTime(m.duration)}</em>
             <IconBtn icon="plus" title="Agregar" size={14} onClick={() => addToTimeline(m)} />
+            <IconBtn icon="trash" title="Eliminar del proyecto" size={14} className="ar-del" onClick={() => askRemove([m.id])} />
           </div>
         ))}
       </div>

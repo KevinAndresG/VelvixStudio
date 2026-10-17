@@ -1,10 +1,10 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
-import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime, subClip, speedAt } from '../engine/model.js';
+import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime, subClip, speedAt, newTrack } from '../engine/model.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import {
   splitAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
-  packMain, ensureTrack, cleanupTracks, addToTimeline, importPaths,
+  packMain, ensureTrack, cleanupTracks, addToTimeline, importPaths, trackName,
 } from './actions.js';
 
 const ROW_H = { main: 66, video: 54, text: 34, effect: 34, audio: 48 };
@@ -181,6 +181,24 @@ export default function Timeline() {
   const totalH = tracks.reduce((a, t) => a + rowH(t), 0);
 
   const xToTime = (clientX) => { const el = scrollRef.current, r = el.getBoundingClientRect(); return Math.max(0, (clientX - r.left + el.scrollLeft) / getState().zoom); };
+  // Where a single dragged clip lands: an existing track of its kind ({ trackId }), or a new track inserted at
+  // index `insert` (near a row's top/bottom edge, over a row of another kind, or above/below all rows). Visual
+  // clips go between the top and the main track, audio among the audio tracks. Effects apply to what is below
+  // them, so this is how one effect moves over a single track without dragging the whole effects row.
+  const dropTarget = (clientY, clip) => {
+    const kind = kindFor(clip), firstAudio = tracks.findIndex((t) => t.kind === 'audio');
+    const [lo, hi] = kind === 'audio' ? [firstAudio < 0 ? tracks.length : firstAudio, tracks.length] : [0, Math.max(0, tracks.findIndex((t) => t.main))];
+    const ins = (i) => ({ insert: clamp(i, lo, hi) });
+    const r = scrollRef.current.getBoundingClientRect(), y = clientY - r.top - 26 + scrollRef.current.scrollTop;
+    if (y < 0) return ins(0);
+    const i = tracks.findIndex((t, k) => y < trackY[k] + rowH(t));
+    if (i < 0) return ins(tracks.length);
+    const t = tracks[i], local = y - trackY[i], h = rowH(t), edge = Math.min(8, h / 4);
+    if (t.kind !== kind || t.locked) return ins(local < h / 2 ? i : i + 1);
+    if (local < edge && !t.main) return ins(i);
+    if (local > h - edge && !t.main) return ins(i + 1);
+    return { trackId: t.id };
+  };
   const yToTrack = (clientY) => {
     const r = scrollRef.current.getBoundingClientRect(), y = clientY - r.top - 26 + scrollRef.current.scrollTop;
     for (let i = 0; i < tracks.length; i++) if (y >= trackY[i] && y < trackY[i] + rowH(tracks[i])) return tracks[i];
@@ -279,24 +297,30 @@ export default function Timeline() {
       const [s1, l1] = snapTo(clip.start + dt, pts, ev.altKey), [s2, l2] = snapTo(clipEnd(clip) + dt, pts, ev.altKey);
       if (l1 != null) dt = s1 - clip.start; else if (l2 != null) dt = s2 - clipEnd(clip);
       setSnapLine(l1 ?? l2);
-      const over = yToTrack(ev.clientY);
-      const target = moving.length === 1 && typeof over === 'object' && over.kind === kindFor(clip) ? over.id : moving.length === 1 && typeof over === 'string' ? over : null;
-      last = { ids, dt, trackId: target };
+      const target = moving.length === 1 ? dropTarget(ev.clientY, clip) : {};
+      last = { ids, dt, trackId: target.trackId || null, insert: target.insert ?? null };
       setDrag(last);
     };
     const up = () => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
       setDrag(null); setSnapLine(null);
       if (!started || !last) return;
-      const { dt, trackId } = last;
+      const { dt, trackId, insert } = last;
       update((p) => {
         const ms = p.clips.filter((c) => ids.includes(c.id));
         for (const c of ms) c.start = Math.max(0, c.start + dt);
         if (ms.length === 1) {
           const c = ms[0];
-          let tk = p.tracks.find((t) => t.id === (typeof trackId === 'string' && trackId !== 'above' && trackId !== 'below' ? trackId : c.trackId));
-          if (trackId === 'above' || trackId === 'below') { c.trackId = null; c.trackId = ensureTrack(p, kindFor(c), c.start, clipEnd(c), [c.id]); tk = p.tracks.find((t) => t.id === c.trackId); }
-          else c.trackId = tk.id;
+          let tk = p.tracks.find((t) => t.id === (trackId || c.trackId));
+          if (insert != null) {
+            // A clip alone on its track dropped right above/below it stays where it is.
+            const own = p.tracks.indexOf(tk), alone = !p.clips.some((x) => x.trackId === tk.id && x.id !== c.id);
+            if (!(alone && !tk.main && (insert === own || insert === own + 1))) {
+              tk = newTrack(kindFor(c), trackName(p, kindFor(c)));
+              p.tracks.splice(insert, 0, tk);
+            }
+          }
+          c.trackId = tk.id;
           if (tk.main && getState().magnet) {
             // Reorder within main track by drop position.
             const others = p.clips.filter((x) => x.trackId === tk.id && x.id !== c.id).sort((a, b) => a.start - b.start);
@@ -436,7 +460,7 @@ export default function Timeline() {
                 </div>
               ))}
               {!project.clips.length && <div className="tl-empty" style={{ top: 8 }}>Arrastra aquí tus videos, fotos y audio</div>}
-              {drag && (drag.trackId === 'above' || drag.trackId === 'below') && <div className="new-track-hint" style={{ top: drag.trackId === 'above' ? 0 : totalH }} />}
+              {drag && drag.insert != null && <div className="new-track-hint" style={{ top: Math.max(0, (drag.insert < tracks.length ? trackY[drag.insert] : totalH) - 1) }} />}
               {box && <div className="box-select" style={{ left: box.x, top: box.y, width: box.w, height: box.h }} />}
             </div>
             {(project.markers || []).map((m) => (
