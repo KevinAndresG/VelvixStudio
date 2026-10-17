@@ -224,6 +224,30 @@ export function splitAtPlayhead() {
   setState({ selection: newIds });
 }
 
+// Q / W (as in CapCut): delete the part of the selected clips (or the main-track clip) left / right of the cursor.
+// On the magnetic main track the rest closes the gap and the cursor follows the cut.
+export function trimAtPlayhead(side) {
+  const t = getState().time, p = proj();
+  const under = (c) => t > c.start + 0.03 && t < clipEnd(c) - 0.03;
+  let targets = p.clips.filter((c) => sel().includes(c.id) && under(c));
+  if (!targets.length) { const m = mainTrack(p); targets = p.clips.filter((c) => c.trackId === m.id && under(c)); }
+  if (!targets.length) return toast('Coloca el cursor sobre un clip');
+  let seek = t;
+  update((d) => {
+    for (const tc of targets) {
+      const c = d.clips.find((x) => x.id === tc.id), { fadeIn, fadeOut, transition } = c;
+      const right = splitClip(c, t);
+      if (side === 'left') {
+        Object.assign(right, { id: c.id, fadeIn, transition });
+        d.clips[d.clips.indexOf(c)] = right;
+        if (getState().magnet && d.tracks.find((k) => k.id === c.trackId).main) seek = Math.min(seek, c.start);
+      } else c.fadeOut = fadeOut;
+    }
+    packMain(d);
+  });
+  setState({ selection: targets.map((c) => c.id), time: seek });
+}
+
 export function deleteSelected() {
   const ids = sel();
   if (!ids.length) return;

@@ -119,6 +119,19 @@ kbd { font: 11px Consolas, monospace; background: var(--bg4); border: 1px solid 
 .tb-left, .tb-center, .tb-right { display: flex; align-items: center; gap: 6px; }
 .tb-left { flex: 1; min-width: 0; }
 .tb-right { flex: 1; justify-content: flex-end; }
+.aspect-pick { position: relative; }
+.ap-trigger { display: flex; align-items: center; gap: 7px; height: 30px; padding: 0 8px 0 6px; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.ap-trigger.open { border-color: var(--acc); }
+.ap-trigger svg { color: var(--tx3); }
+.ap-icon { width: 24px; height: 18px; display: grid; place-items: center; }
+.ap-icon i { display: block; border: 1.6px solid var(--acc2); border-radius: 2.5px; box-sizing: border-box; }
+.ap-menu { position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 70; display: grid; grid-template-columns: repeat(4, 64px); gap: 4px; padding: 6px;
+  background: #22242e; border: 1px solid var(--line2); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+.ap-menu button { height: 58px; padding: 0; display: grid; place-items: center; background: transparent; border: 1px solid transparent; border-radius: 8px; color: var(--tx2); }
+.ap-menu button:hover { background: var(--bg4); color: var(--tx); }
+.ap-menu button.active { border-color: var(--acc); background: var(--acc-bg); color: var(--acc2); }
+.ap-frame { width: 50px; height: 42px; display: grid; place-items: center; }
+.ap-frame i { display: grid; place-items: center; box-sizing: border-box; border: 1.8px solid currentColor; border-radius: 4px; font-style: normal; font-size: 9.5px; font-weight: 600; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .tb-center .field.select { width: auto; } .tb-center select { width: auto; padding: 4px 8px; height: 30px; }
 .proj-name { background: transparent !important; border: 1px solid transparent !important; font-weight: 600; width: 260px !important; padding: 5px 8px !important; }
 .proj-name:hover, .proj-name:focus { border-color: var(--line2) !important; background: var(--bg3) !important; }
@@ -130,12 +143,14 @@ kbd { font: 11px Consolas, monospace; background: var(--bg4); border: 1px solid 
 .workspace { flex: 1; display: flex; min-height: 0; }
 
 /* ---------- left panel ---------- */
-.left { width: 360px; flex: none; display: flex; border-right: 1px solid var(--line); background: var(--bg2); min-height: 0; }
+.left { position: relative; width: 360px; flex: none; display: flex; border-right: 1px solid var(--line); background: var(--bg2); min-height: 0; }
 .left-tabs { width: 66px; flex: none; display: flex; flex-direction: column; padding: 6px 0; border-right: 1px solid var(--line); overflow-y: auto; }
 .left-tabs button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0; background: none; border: 0; color: var(--tx3); font-size: 10.5px; border-left: 2px solid transparent; }
 .left-tabs button:hover { color: var(--tx); }
 .left-tabs button.active { color: var(--acc2); border-left-color: var(--acc); background: linear-gradient(90deg, var(--acc-bg), transparent); }
 .left-body { flex: 1; overflow-y: auto; min-width: 0; }
+.left-drop { position: absolute; inset: 6px; z-index: 20; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; pointer-events: none;
+  border: 2px dashed var(--acc); border-radius: 12px; background: rgba(124, 92, 255, .14); color: var(--acc2); font-weight: 600; backdrop-filter: blur(1px); }
 .panel { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .panel h5 { margin: 10px 0 2px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx3); font-weight: 600; }
 .chips { display: flex; gap: 5px; }

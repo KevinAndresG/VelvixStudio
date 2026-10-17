@@ -3,6 +3,8 @@ import React, { useState } from 'react';
 const P = {
   play: 'M7 4.5v15l12-7.5z', pause: 'M7 4h3.5v16H7zM13.5 4H17v16h-3.5z',
   undo: 'M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11', redo: 'm15 14 5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13',
+  chevron: 'm6 9 6 6 6-6',
+  trimLeft: 'M13 3v18M13 7h7v10h-7M3.5 9.5l5 5M8.5 9.5l-5 5', trimRight: 'M11 3v18M11 7H4v10h7M15.5 9.5l5 5M20.5 9.5l-5 5',
   split: 'M6 3v18M18 3v18M6 12h12M10 8l-4 4 4 4M14 8l4 4-4 4', trash: 'M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6',
   copy: 'M9 9h11v11H9zM5 15H4V4h11v1', snow: 'M12 2v20M4.9 7l14.2 10M4.9 17 19.1 7M9 4l3 2 3-2M9 20l3-2 3 2',
   reverse: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5', music: 'M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM21 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0z',

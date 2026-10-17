@@ -3,7 +3,7 @@ import { useStore, getState, setState, update, toast } from '../store.js';
 import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime, subClip, speedAt, newTrack } from '../engine/model.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import {
-  splitAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
+  splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
   packMain, ensureTrack, cleanupTracks, addToTimeline, importPaths, trackName,
 } from './actions.js';
 
@@ -419,6 +419,8 @@ export default function Timeline() {
       <div className="tl-tools">
         <div className="tools-left">
           {tool('split', 'Dividir (S)', splitAtPlayhead)}
+          {tool('trimLeft', 'Borrar a la izquierda del cursor (Q)', () => trimAtPlayhead('left'))}
+          {tool('trimRight', 'Borrar a la derecha del cursor (W)', () => trimAtPlayhead('right'))}
           {tool('trash', 'Eliminar (Supr)', deleteSelected, !hasSel)}
           {tool('copy', 'Duplicar (Ctrl+D)', duplicateSelected, !hasSel)}
           <span className="sep" />
@@ -474,8 +476,10 @@ export default function Timeline() {
         </div>
       </div>
       {menu && (
-        <div className="ctx-menu" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 260) }} onClick={() => setMenu(null)}>
+        <div className="ctx-menu" style={{ left: menu.x, top: Math.min(menu.y, window.innerHeight - 320) }} onClick={() => setMenu(null)}>
           <button onClick={splitAtPlayhead}>Dividir <kbd>S</kbd></button>
+          <button onClick={() => trimAtPlayhead('left')}>Borrar a la izquierda <kbd>Q</kbd></button>
+          <button onClick={() => trimAtPlayhead('right')}>Borrar a la derecha <kbd>W</kbd></button>
           <button onClick={duplicateSelected}>Duplicar <kbd>Ctrl+D</kbd></button>
           {menu.clip.type === 'video' && <button onClick={detachAudio}>Separar audio</button>}
           {menu.clip.type === 'video' && <button onClick={toggleReverse}>{menu.clip.reverse ? 'Quitar inversión' : 'Invertir'}</button>}

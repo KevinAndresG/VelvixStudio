@@ -39,8 +39,22 @@ function RemoveMediaModal() {
 
 export default function MediaPanel() {
   const [tab, setTab] = useState('media');
+  const [over, setOver] = useState(false);
+  // Files dropped anywhere on the panel (any tab, not just over the cards) are imported into Medios.
+  const files = (e) => [...e.dataTransfer.types].includes('Files');
+  const drop = {
+    onDragOver: (e) => { if (!files(e)) return; e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; if (!over) setOver(true); },
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setOver(false); },
+    onDrop: (e) => {
+      setOver(false);
+      if (!files(e)) return;
+      e.preventDefault();
+      const f = [...e.dataTransfer.files].map((x) => window.api.pathForFile(x)).filter(Boolean);
+      if (f.length) { setTab('media'); importPaths(f); }
+    },
+  };
   return (
-    <aside className="left">
+    <aside className={`left ${over ? 'drop-over' : ''}`} {...drop}>
       <nav className="left-tabs">
         {TABS.map(([k, icon, label]) => (
           <button key={k} className={tab === k ? 'active' : ''} onClick={() => setTab(k)} title={label}>
@@ -62,6 +76,7 @@ export default function MediaPanel() {
         {tab === 'ai' && <VisionTab />}
         {tab === 'brand' && <BrandTab />}
       </div>
+      {over && <div className="left-drop"><Icon name="upload" size={30} /><p>Suelta para importar</p></div>}
       <RemoveMediaModal />
     </aside>
   );
@@ -110,9 +125,7 @@ function MediaTab() {
       {!shown.length && (
         <div className="drop-zone" onClick={importDialog}><Icon name="upload" size={28} /><p>Arrastra archivos aquí<br /><small>MP4, MOV, MKV, WEBM, MP3, WAV, PNG, JPG…</small></p></div>
       )}
-      <div className="media-grid"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); const f = [...e.dataTransfer.files].map((x) => window.api.pathForFile(x)).filter(Boolean); if (f.length) importPaths(f); }}>
+      <div className="media-grid">
         {shown.map((m) => <MediaCard key={m.id} m={m} />)}
       </div>
       {unused > 0 && <button className="btn wide remove-unused" onClick={() => askRemove(unusedMedia(getState().project).map((m) => m.id))}><Icon name="trash" size={15} /> Eliminar los no usados ({unused})</button>}

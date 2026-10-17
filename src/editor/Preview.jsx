@@ -24,7 +24,7 @@ export default function Preview() {
   const playing = useStore((s) => s.playing);
   const time = useStore((s) => s.time);
   const selection = useStore((s) => s.selection);
-  const wrapRef = useRef(null), canvasRef = useRef(null), stageRef = useRef(null);
+  const wrapRef = useRef(null), canvasRef = useRef(null), stageRef = useRef(null), boxPending = useRef(false);
   const [box, setBox] = useState({ w: 640, h: 360 });
   const [guides, setGuides] = useState({ v: false, h: false });
   const [, force] = useState(0);
@@ -64,7 +64,8 @@ export default function Preview() {
       renderFrame(canvas.getContext('2d'), p, t, pool.getDrawable, canvas.width, canvas.height);
       // Refresh selection overlay when a clip under it moves (keyframes/animations).
       const key = s.selection.join() + Math.round(t * 30);
-      if (key !== lastSel && s.selection.length) { lastSel = key; force((n) => n + 1); }
+      // Also until the box can be measured (a paused video whose frame was not decoded yet when it was selected).
+      if ((key !== lastSel && s.selection.length) || boxPending.current) { lastSel = key; force((n) => n + 1); }
     };
     raf = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(raf); pool.destroy(); previewPool = null; };
@@ -76,24 +77,44 @@ export default function Preview() {
   const cw = Math.round(Math.min(project.width, box.w * dpr)), ch = Math.round(cw * (project.height / project.width));
 
   // ---------- on-canvas selection ----------
-  const selClip = project.clips.find((c) => c.id === selection[0] && (c.type === 'video' || c.type === 'image' || c.type === 'text'));
-  let bounds = null;
-  if (selClip && time >= selClip.start && time < clipEnd(selClip) && canvasRef.current) {
+  // Bounds of a visual clip at the current time, in stage (CSS) pixels.
+  const boundsOf = (clip) => {
+    if (!canvasRef.current || !(time >= clip.start && time < clipEnd(clip))) return null;
     const k = box.w / cw;
-    const b = selClip.type === 'text'
-      ? textBounds(canvasRef.current.getContext('2d'), selClip, time, cw, ch)
-      : previewPool && visualBounds(selClip, time, previewPool.getDrawable(selClip, mediaOf(project, selClip)), cw, ch);
-    if (b) bounds = { cx: b.cx * k, cy: b.cy * k, w: b.w * k, h: b.h * k, rotation: b.rotation };
-  }
+    const b = clip.type === 'text'
+      ? textBounds(canvasRef.current.getContext('2d'), clip, time, cw, ch)
+      : previewPool && visualBounds(clip, time, previewPool.getDrawable(clip, mediaOf(project, clip)), cw, ch);
+    return b && { cx: b.cx * k, cy: b.cy * k, w: b.w * k, h: b.h * k, rotation: b.rotation };
+  };
+  const selClip = project.clips.find((c) => c.id === selection[0] && (c.type === 'video' || c.type === 'image' || c.type === 'text'));
+  const bounds = selClip ? boundsOf(selClip) : null;
+  boxPending.current = !!selClip && !bounds && time >= selClip.start && time < clipEnd(selClip);
 
-  const startDrag = (e, mode) => {
+  // Topmost visible element under the pointer (as drawn: top track first), skipping locked tracks.
+  const hitAt = (e) => {
+    const rect = stageRef.current.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
+    const items = activeVisual(project, time).filter((i) => i.clip.type !== 'effect' && !i.track.locked && time >= i.clip.start && time < clipEnd(i.clip)).reverse();
+    for (const { clip } of items) {
+      const b = boundsOf(clip);
+      if (!b) continue;
+      const a = (-b.rotation * Math.PI) / 180, dx = px - b.cx, dy = py - b.cy;
+      const rx = dx * Math.cos(a) - dy * Math.sin(a), ry = dx * Math.sin(a) + dy * Math.cos(a);
+      if (Math.abs(rx) <= b.w / 2 && Math.abs(ry) <= b.h / 2) return { clip, b };
+    }
+    return null;
+  };
+
+  const startDrag = (e, mode, clip = selClip, b = bounds) => {
     e.preventDefault(); e.stopPropagation();
-    const clip = selClip, rect = stageRef.current.getBoundingClientRect();
+    const rect = stageRef.current.getBoundingClientRect();
     const tr0 = transformAt(clip, time), x0 = e.clientX, y0 = e.clientY;
-    const cx = rect.left + bounds.cx, cy = rect.top + bounds.cy;
+    const cx = rect.left + b.cx, cy = rect.top + b.cy;
     const d0 = Math.hypot(x0 - cx, y0 - cy), a0 = Math.atan2(y0 - cy, x0 - cx);
     const key = `${mode}-${clip.id}-${Date.now()}`;
+    let moved = mode !== 'move'; // a plain click selects without nudging the clip
     const move = (ev) => {
+      if (!moved && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return;
+      moved = true;
       update((p) => {
         const c = p.clips.find((x) => x.id === clip.id);
         if (mode === 'move') {
@@ -116,23 +137,15 @@ export default function Preview() {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
-  // Click selects the topmost visual element under the cursor.
+  // Click selects (and starts moving) the topmost element under the cursor, as a click on its timeline clip does,
+  // also inside the box of the current selection when something else is drawn above it there.
   const pick = (e) => {
-    const rect = stageRef.current.getBoundingClientRect(), k = cw / box.w;
-    const px = (e.clientX - rect.left) * k, py = (e.clientY - rect.top) * k;
-    const items = activeVisual(project, time).filter((i) => i.clip.type !== 'effect' && time >= i.clip.start && time < clipEnd(i.clip)).reverse();
-    for (const { clip } of items) {
-      const b = clip.type === 'text' ? textBounds(canvasRef.current.getContext('2d'), clip, time, cw, ch) : visualBounds(clip, time, previewPool.getDrawable(clip, mediaOf(project, clip)), cw, ch);
-      if (!b) continue;
-      const a = (-b.rotation * Math.PI) / 180, dx = px - b.cx, dy = py - b.cy;
-      const rx = dx * Math.cos(a) - dy * Math.sin(a), ry = dx * Math.sin(a) + dy * Math.cos(a);
-      if (Math.abs(rx) <= b.w / 2 && Math.abs(ry) <= b.h / 2) {
-        setState({ selection: [clip.id] });
-        if (e.detail === 2 && clip.type === 'text') window.dispatchEvent(new Event('velvix:focus-text'));
-        return;
-      }
-    }
-    setState({ selection: [] });
+    if (e.button !== 0) return;
+    const hit = hitAt(e);
+    if (!hit) { setState({ selection: [] }); return; }
+    if (selection.length !== 1 || selection[0] !== hit.clip.id) setState({ selection: [hit.clip.id] });
+    if (e.detail === 2 && hit.clip.type === 'text') { window.dispatchEvent(new Event('velvix:focus-text')); return; }
+    startDrag(e, 'move', hit.clip, hit.b);
   };
 
   const snapshot = async () => {
@@ -162,7 +175,7 @@ export default function Preview() {
           {guides.h && <div className="guide h" />}
           {bounds && (
             <div className="sel-box" style={{ left: bounds.cx, top: bounds.cy, width: bounds.w, height: bounds.h, transform: `translate(-50%,-50%) rotate(${bounds.rotation}deg)` }}
-              onPointerDown={(e) => startDrag(e, 'move')}>
+              onPointerDown={pick}>
               {['nw', 'ne', 'sw', 'se'].map((h) => <i key={h} className={`h ${h}`} onPointerDown={(e) => startDrag(e, 'scale')} />)}
               <b className="rot" title="Rotar (Shift: libre)" onPointerDown={(e) => startDrag(e, 'rotate')}>⟳</b>
             </div>

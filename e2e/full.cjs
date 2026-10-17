@@ -692,6 +692,15 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   }
   if (vm.status !== 0 && fails.length === nm) fails.push(`mediafx terminó con código ${vm.status} ${(vm.stderr || '').slice(-300)}`);
 
+  // ---------- v1.8: Q/W, clic en la vista previa, formato visual, soltar en el panel, subtítulos sincronizados ----------
+  const n8 = fails.length;
+  const v8 = cp3.spawnSync(process.execPath, [path.join(__dirname, 'verify8.cjs')], { env: process.env, encoding: 'utf8', timeout: 900000 });
+  for (const line of (v8.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('verify8 ' + line);
+  }
+  if (v8.status !== 0 && fails.length === n8) fails.push(`verify8 terminó con código ${v8.status} ${(v8.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);

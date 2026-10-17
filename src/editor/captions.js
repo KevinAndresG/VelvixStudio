@@ -41,7 +41,43 @@ function toWords(chunks) {
   return words;
 }
 
-export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
+// Loudness of 16 kHz mono audio in dB per 10 ms frame.
+export function envelope(audio) {
+  const n = Math.ceil(audio.length / 160), env = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let sum = 0; const a = f * 160, b = Math.min(audio.length, a + 160);
+    for (let i = a; i < b; i++) sum += audio[i] * audio[i];
+    env[f] = 10 * Math.log10(sum / Math.max(1, b - a) + 1e-10);
+  }
+  return env;
+}
+
+// Whisper's word times are ~0.1–0.25 s early after a pause and words often run on into the silence after them.
+// A start that falls in silence moves to where the voice really begins and an end in a long silence moves back
+// to where it stops, so lines and karaoke follow the voice.
+export function snapWords(words, env) {
+  if (!env || !env.length) return words;
+  const sorted = [...env].sort((a, b) => a - b), floor = sorted[Math.floor(sorted.length * 0.1)];
+  const thr = Math.max(-50, Math.min(-28, floor + 15)), F = (t) => Math.max(0, Math.min(env.length - 1, Math.round(t * 100)));
+  const voiced = (f) => env[f] >= thr && env[Math.min(env.length - 1, f + 1)] >= thr;
+  return words.map((w) => {
+    let { s, e } = w;
+    if (!voiced(F(s))) {
+      for (let f = F(s), lim = F(Math.min(e - 0.08, s + 0.4)); f <= lim; f++) if (voiced(f)) { s = f / 100; break; }
+    }
+    if (!voiced(F(e)) && e - s > 0.25) {
+      let f = F(e);
+      while (f > F(s + 0.15) && env[f] < thr) f--;
+      if (e - f / 100 > 0.15) e = Math.max(s + 0.15, f / 100 + 0.08);
+    }
+    return { ...w, s, e };
+  });
+}
+
+// A caption line appears this long before its first word (reading starts a moment before the voice).
+const LEAD = 0.08;
+
+export function placeCaptions(lines, styleIndex = 14, { emojis = false, lead = 0 } = {}) {
   const p = getState().project;
   const portrait = p.height > p.width;
   const preset = TEXT_PRESETS[styleIndex].t;
@@ -49,14 +85,16 @@ export function placeCaptions(lines, styleIndex = 14, { emojis = false } = {}) {
     d.clips = d.clips.filter((c) => !c.caption);
     let tk = d.tracks.find((t) => t.caption);
     if (!tk) { tk = { ...newTrack('text', 'Subtítulos'), caption: true }; d.tracks.splice(0, 0, tk); }
+    let prevEnd = 0;
     for (const line of lines) {
-      const start = line[0].s, end = Math.max(line[line.length - 1].e, start + 0.3);
+      const start = Math.max(0, Math.min(line[0].s, Math.max(prevEnd, line[0].s - lead))), end = Math.max(line[line.length - 1].e, start + 0.3);
       const c = newClip('text', { name: 'Subtítulo', start, duration: end - start, trackId: tk.id, caption: true });
       c.text = { ...structuredClone(DEFAULT_TEXT), ...structuredClone(preset), content: line.map((w) => w.text).join(' '), size: portrait ? 70 : 60 };
       for (const k of TEXT_GROUPS) c.text[k] = { ...DEFAULT_TEXT[k], ...(preset[k] || {}) };
       c.transform.y = portrait ? 0.18 : 0.36;
       c.words = line.map((w) => ({ text: w.text, s: w.s - start, e: w.e - start }));
       d.clips.push(c);
+      prevEnd = end;
     }
     if (emojis) addCaptionEmojis(d);
   });
@@ -81,6 +119,7 @@ export function transcribe({ model, language }) {
     try {
       const raw = await window.api.captionsAudio(segs, projectDuration(p));
       const audio = new Float32Array(raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength));
+      const env = envelope(audio); // before the samples are transferred to the worker
       const w = getWorker();
       w.onmessage = ({ data }) => {
         if (data.type === 'download') setJob(jobId, { label: 'Descargando modelo de voz (solo la primera vez)…', progress: data.progress });
@@ -88,7 +127,7 @@ export function transcribe({ model, language }) {
         if (data.type === 'error') { setJob(jobId, null); toast('Error de subtítulos: ' + data.msg, 'error'); resolve(null); }
         if (data.type === 'done') {
           setJob(jobId, null);
-          const words = applyVocab(toWords(data.chunks), parseVocab(getVocab()));
+          const words = applyVocab(snapWords(toWords(data.chunks), env), parseVocab(getVocab()));
           if (!words.length) { toast('No se detectó voz'); return resolve(null); }
           update((d) => { d.transcript = { words, lang: language }; });
           resolve(words);
@@ -104,7 +143,7 @@ export function captionsFromTranscript(style = 14, opts = {}) {
   const p = getState().project, words = p.transcript && p.transcript.words;
   if (!words || !words.length) return 0;
   const lines = groupWords(words, p.height > p.width ? 22 : 38);
-  placeCaptions(lines, style, opts);
+  placeCaptions(lines, style, { lead: LEAD, ...opts });
   return lines.length;
 }
 

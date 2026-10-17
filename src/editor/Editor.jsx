@@ -7,7 +7,7 @@ import Preview, { snapshotCanvas } from './Preview.jsx';
 import Timeline from './Timeline.jsx';
 import Inspector from './Inspector.jsx';
 import ExportDialog from './ExportDialog.jsx';
-import { splitAtPlayhead, deleteSelected, duplicateSelected, addMarker, packMain, ensureTrack } from './actions.js';
+import { splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, addMarker, packMain, ensureTrack } from './actions.js';
 
 let clipboard = [];
 
@@ -21,6 +21,8 @@ function onKey(e) {
   else if (ctrl && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
   else if ((k === 's' && !ctrl) || (ctrl && k === 'b')) { e.preventDefault(); splitAtPlayhead(); }
+  else if (k === 'q' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('left'); }
+  else if (k === 'w' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('right'); }
   else if (k === 'delete' || k === 'backspace') { e.preventDefault(); deleteSelected(); }
   else if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
   else if (ctrl && k === 'c') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); }
@@ -110,7 +112,7 @@ export default function Editor() {
         <div className="tb-center">
           <IconBtn icon="undo" title="Deshacer (Ctrl+Z)" onClick={undo} disabled={!canUndo} />
           <IconBtn icon="redo" title="Rehacer (Ctrl+Y)" onClick={redo} disabled={!canRedo} />
-          <Select value={project.aspect} options={Object.fromEntries(Object.keys(ASPECTS).map((a) => [a, `Formato ${a}`]))} onChange={setAspect} />
+          <AspectPicker value={project.aspect} onChange={setAspect} />
           <Select value={String(project.fps)} options={{ 24: '24 fps', 25: '25 fps', 30: '30 fps', 50: '50 fps', 60: '60 fps' }} onChange={(v) => update((p) => { p.fps = +v; })} />
         </div>
         <div className="tb-right">
@@ -145,9 +147,45 @@ export default function Editor() {
   );
 }
 
+const ASPECT_USES = {
+  '16:9': 'YouTube, pantallas', '9:16': 'TikTok, Reels, Shorts', '1:1': 'Publicación cuadrada', '4:5': 'Feed de Instagram',
+  '4:3': 'Clásico', '3:4': 'Vertical clásico', '21:9': 'Cine panorámico', '2:1': 'Panorámico',
+};
+// Shape of `a` fitted inside a w×h box (CSS px).
+const shape = (a, w, h) => { const [x, y] = ASPECTS[a], k = Math.min(w / x, h / y); return { width: Math.round(x * k), height: Math.round(y * k) }; };
+
+// Project format picker: each option is drawn as the frame it gives, with its ratio inside.
+function AspectPicker({ value, onChange }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (!e.target.closest('.aspect-pick')) setOpen(false); };
+    const esc = (e) => e.key === 'Escape' && setOpen(false);
+    window.addEventListener('pointerdown', close); window.addEventListener('keydown', esc, true);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', esc, true); };
+  }, [open]);
+  return (
+    <div className="aspect-pick">
+      <button className={`btn ap-trigger ${open ? 'open' : ''}`} title={`Formato del proyecto: ${value}`} onClick={() => setOpen(!open)}>
+        <span className="ap-icon"><i style={shape(value, 22, 16)} /></span>{value}<Icon name="chevron" size={12} />
+      </button>
+      {open && (
+        <div className="ap-menu" role="listbox">
+          {Object.keys(ASPECTS).map((a) => (
+            <button key={a} role="option" aria-selected={a === value} className={a === value ? 'active' : ''} data-aspect={a}
+              title={`${ASPECTS[a].join(' × ')} · ${ASPECT_USES[a]}`} onClick={() => { onChange(a); setOpen(false); }}>
+              <span className="ap-frame"><i style={shape(a, 50, 42)}>{a}</i></span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ShortcutHelp({ onClose }) {
   const rows = [
-    ['Espacio', 'Reproducir / pausar'], ['S  o  Ctrl+B', 'Dividir en el cursor'], ['Supr', 'Eliminar selección'],
+    ['Espacio', 'Reproducir / pausar'], ['S  o  Ctrl+B', 'Dividir en el cursor'], ['Q / W', 'Borrar a la izquierda / derecha del cursor'], ['Supr', 'Eliminar selección'],
     ['Ctrl+Z / Ctrl+Y', 'Deshacer / rehacer'], ['Ctrl+C / X / V', 'Copiar / cortar / pegar'], ['Ctrl+D', 'Duplicar'],
     ['← / →', 'Fotograma anterior / siguiente'], ['Shift+← / →', '±1 segundo'], ['J / L', '±5 segundos'], ['Inicio / Fin', 'Ir al inicio / final'],
     ['Ctrl + / Ctrl −', 'Zoom de la línea de tiempo'], ['M', 'Agregar marcador'], ['Ctrl+A', 'Seleccionar todo'], ['Ctrl+E', 'Exportar'],

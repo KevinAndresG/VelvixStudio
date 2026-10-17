@@ -1,5 +1,5 @@
 // Speech-to-text off the UI thread. Model files download once from Hugging Face and stay cached.
-import { pipeline, env } from '@huggingface/transformers';
+import { pipeline, env, Tensor } from '@huggingface/transformers';
 import * as ort from 'onnxruntime-web';
 import { separate, MDX } from '../engine/mdx.js';
 
@@ -13,7 +13,10 @@ async function load(model, onProgress) {
   if (asr && loaded === model) return asr;
   const device = (await navigator.gpu?.requestAdapter?.()) ? 'webgpu' : 'wasm';
   const opts = { device, progress_callback: onProgress, dtype: device === 'webgpu' ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8' };
-  asr = await pipeline('automatic-speech-recognition', model, opts);
+  // The *_timestamped exports output cross attentions, which word-level timestamps need: the plain models
+  // only give phrase timestamps in coarse blocks, so captions drifted from the voice.
+  try { asr = await pipeline('automatic-speech-recognition', model + '_timestamped', opts); }
+  catch { asr = await pipeline('automatic-speech-recognition', model, opts); }
   loaded = model;
   return asr;
 }
@@ -162,6 +165,19 @@ async function upscale({ url, frame, w, h, outW, outH }) {
   self.postMessage({ type: 'upscaled', rgba: px }, [px.buffer]);
 }
 
+// Spoken language from the first 30 s: one decoder step after <|startoftranscript|>, best language token.
+// (transformers.js defaults to English when no language is given.)
+async function detectLanguage(p, audio) {
+  const { input_features } = await p.processor(audio.subarray(0, 30 * 16000));
+  const cfg = p.model.generation_config, ids = Object.values(cfg.lang_to_id);
+  const out = await p.model({ input_features, decoder_input_ids: new Tensor('int64', [BigInt(cfg.decoder_start_token_id)], [1, 1]) });
+  const v = out.logits.dims.at(-1), row = out.logits.data.subarray(out.logits.data.length - v);
+  let best = ids[0];
+  for (const id of ids) if (row[id] > row[best]) best = id;
+  const tok = Object.keys(cfg.lang_to_id).find((k) => cfg.lang_to_id[k] === best);
+  return tok.slice(2, -2);
+}
+
 self.onmessage = async ({ data }) => {
   const fail = (e) => self.postMessage({ type: 'error', msg: String(e && e.message || e) });
   if (data.task === 'matte') return matte(data).catch(fail);
@@ -181,10 +197,15 @@ self.onmessage = async ({ data }) => {
       }
     });
     self.postMessage({ type: 'status', msg: 'Transcribiendo…' });
-    const opts = { chunk_length_s: 30, stride_length_s: 5, task: 'transcribe', language: language === 'auto' ? null : language };
+    let lang = language === 'auto' ? null : language;
+    if (!lang) {
+      try { lang = await detectLanguage(p, audio); self.postMessage({ type: 'lang', lang }); }
+      catch (e) { console.warn('language detection failed', e && e.message); }
+    }
+    const opts = { chunk_length_s: 30, stride_length_s: 5, task: 'transcribe', language: lang };
     let out;
     try { out = await p(audio, { ...opts, return_timestamps: 'word' }); }
-    catch { out = await p(audio, { ...opts, return_timestamps: true }); }
+    catch (e) { console.warn('word timestamps failed', e && e.message); out = await p(audio, { ...opts, return_timestamps: true }); }
     self.postMessage({ type: 'done', chunks: out.chunks || [{ text: out.text, timestamp: [0, audio.length / 16000] }] });
   } catch (e) {
     self.postMessage({ type: 'error', msg: String(e && e.message || e) });
