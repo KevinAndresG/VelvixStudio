@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useStore, getState, update, toast } from '../store.js';
+import { useStore, getState, setState, update, toast } from '../store.js';
 import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER, DEFAULT_TEXT } from '../engine/model.js';
 import { BADGES, BADGE_THEMES, drawBadge, badgeSize } from '../engine/stickers.js';
 import { cssFilter } from '../engine/render.js';
@@ -19,10 +19,11 @@ const TABS = [
 ];
 
 // Delete buttons call askRemove(ids): media used on the timeline asks first, unused media goes straight away (undo restores it).
-let askRemove = () => {};
+let showRemove = () => {};
+export const askRemove = (list) => showRemove(list);
 function RemoveMediaModal() {
   const [ids, setIds] = useState(null);
-  askRemove = (list) => {
+  showRemove = (list) => {
     const p = getState().project;
     if (p.clips.some((c) => list.includes(c.mediaId))) setIds(list); else removeMedia(list);
   };
@@ -82,8 +83,21 @@ export default function MediaPanel() {
   );
 }
 
-function MediaCard({ m }) {
+// Click selects (Ctrl toggles, Shift selects a range); Supr then removes the selection like the trash button.
+function selectMedia(e, m, shown) {
+  const sel = getState().mediaSel;
+  let next = [m.id];
+  if (e.ctrlKey || e.metaKey) next = sel.includes(m.id) ? sel.filter((id) => id !== m.id) : [...sel, m.id];
+  else if (e.shiftKey && sel.length) {
+    const ids = shown.map((x) => x.id), a = ids.indexOf(sel[sel.length - 1]), b = ids.indexOf(m.id);
+    if (a >= 0) next = [...new Set([...sel, ...ids.slice(Math.min(a, b), Math.max(a, b) + 1)])];
+  }
+  setState({ mediaSel: next, selection: [] });
+}
+
+function MediaCard({ m, shown }) {
   const used = useStore((s) => s.project.clips.some((c) => c.mediaId === m.id));
+  const selected = useStore((s) => s.mediaSel.includes(m.id));
   const relink = async () => {
     const paths = await window.api.openMedia();
     if (!paths[0]) return;
@@ -92,7 +106,8 @@ function MediaCard({ m }) {
     toast('Archivo vuelto a vincular');
   };
   return (
-    <div className={`media-card ${m.missing ? 'missing' : ''}`} draggable={!m.missing}
+    <div className={`media-card ${m.missing ? 'missing' : ''} ${selected ? 'selected' : ''}`} draggable={!m.missing}
+      onClick={(e) => { e.stopPropagation(); selectMedia(e, m, shown); }}
       onDragStart={(e) => { e.dataTransfer.setData('velvix/media', m.id); e.dataTransfer.effectAllowed = 'copy'; }}
       onDoubleClick={() => !m.missing && addToTimeline(m)} title={m.path}>
       <div className="mc-thumb">
@@ -100,8 +115,8 @@ function MediaCard({ m }) {
         {m.type !== 'image' && <span className="dur">{fmtTime(m.duration)}</span>}
         {used && <span className="used" title="En la línea de tiempo">●</span>}
         {m.missing
-          ? <button className="mc-add relink" onClick={relink} title="Archivo no encontrado: volver a vincular"><Icon name="link" size={14} /></button>
-          : <button className="mc-add" onClick={() => addToTimeline(m)} title="Agregar a la línea de tiempo"><Icon name="plus" size={14} /></button>}
+          ? <button className="mc-add relink" onClick={(e) => { e.stopPropagation(); relink(); }} title="Archivo no encontrado: volver a vincular"><Icon name="link" size={14} /></button>
+          : <button className="mc-add" onClick={(e) => { e.stopPropagation(); addToTimeline(m); }} title="Agregar a la línea de tiempo"><Icon name="plus" size={14} /></button>}
         <button className="mc-del" onClick={(e) => { e.stopPropagation(); askRemove([m.id]); }} title="Eliminar del proyecto"><Icon name="trash" size={13} /></button>
       </div>
       <span className="mc-name">{m.name}</span>
@@ -125,8 +140,8 @@ function MediaTab() {
       {!shown.length && (
         <div className="drop-zone" onClick={importDialog}><Icon name="upload" size={28} /><p>Arrastra archivos aquí<br /><small>MP4, MOV, MKV, WEBM, MP3, WAV, PNG, JPG…</small></p></div>
       )}
-      <div className="media-grid">
-        {shown.map((m) => <MediaCard key={m.id} m={m} />)}
+      <div className="media-grid" onClick={() => setState({ mediaSel: [] })}>
+        {shown.map((m) => <MediaCard key={m.id} m={m} shown={shown} />)}
       </div>
       {unused > 0 && <button className="btn wide remove-unused" onClick={() => askRemove(unusedMedia(getState().project).map((m) => m.id))}><Icon name="trash" size={15} /> Eliminar los no usados ({unused})</button>}
     </div>

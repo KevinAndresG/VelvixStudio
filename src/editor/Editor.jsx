@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useStore, getState, setState, undo, redo, update, flushSave, toast } from '../store.js';
 import { projectDuration, ASPECTS, uid, clipEnd } from '../engine/model.js';
 import { Icon, IconBtn, Select, Modal } from '../ui.jsx';
-import MediaPanel from './MediaPanel.jsx';
+import MediaPanel, { askRemove } from './MediaPanel.jsx';
 import Preview, { snapshotCanvas } from './Preview.jsx';
 import Timeline from './Timeline.jsx';
 import Inspector from './Inspector.jsx';
@@ -23,7 +23,7 @@ function onKey(e) {
   else if ((k === 's' && !ctrl) || (ctrl && k === 'b')) { e.preventDefault(); splitAtPlayhead(); }
   else if (k === 'q' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('left'); }
   else if (k === 'w' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('right'); }
-  else if (k === 'delete' || k === 'backspace') { e.preventDefault(); deleteSelected(); }
+  else if (k === 'delete' || k === 'backspace') { e.preventDefault(); if (s.mediaSel.length) askRemove(s.mediaSel); else deleteSelected(); }
   else if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
   else if (ctrl && k === 'c') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); }
   else if (ctrl && k === 'x') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); deleteSelected(); }
@@ -46,7 +46,7 @@ function onKey(e) {
     setState({ selection: ids });
   }
   else if (ctrl && k === 'a') { e.preventDefault(); setState({ selection: s.project.clips.map((c) => c.id) }); }
-  else if (k === 'escape') setState({ selection: [] });
+  else if (k === 'escape') setState({ selection: [], mediaSel: [] });
   else if (k === 'arrowleft') { e.preventDefault(); seek(s.time - (e.shiftKey ? 1 : 1 / fps)); }
   else if (k === 'arrowright') { e.preventDefault(); seek(s.time + (e.shiftKey ? 1 : 1 / fps)); }
   else if (k === 'home') seek(0);
@@ -67,6 +67,7 @@ export default function Editor() {
   const [exporting, setExporting] = useState(false);
   const [help, setHelp] = useState(false);
   const [tpl, setTpl] = useState(null); // name being typed for "save as template"
+  const [widths, setWidths] = useState(() => ({ left: +localStorage.getItem('leftWidth') || 0, right: +localStorage.getItem('rightWidth') || 0 }));
   // The project (media, tracks, clips, look) as a reusable template, with the current frame as its picture.
   const saveTemplate = async () => {
     const p = getState().project, blob = await snapshotCanvas(160).catch(() => null);
@@ -94,7 +95,7 @@ export default function Editor() {
     } catch { /* thumbnail is optional */ }
     await flushSave();
     window.api.sessionSet(null);
-    setState({ view: 'home', project: null, past: [], future: [], selection: [] });
+    setState({ view: 'home', project: null, past: [], future: [], selection: [], mediaSel: [] });
   };
 
   const setAspect = (a) => update((p) => { const [w, h] = ASPECTS[a]; p.aspect = a; p.width = w; p.height = h; });
@@ -128,9 +129,11 @@ export default function Editor() {
           <button className="btn primary" onClick={() => setExporting(true)}><Icon name="download" size={16} /> Exportar</button>
         </div>
       </header>
-      <div className="workspace">
+      <div className="workspace" style={{ ...(widths.left && { '--left-w': `${widths.left}px` }), ...(widths.right && { '--right-w': `${widths.right}px` }) }}>
         <MediaPanel />
+        <Splitter side="left" widths={widths} setWidths={setWidths} />
         <Preview />
+        <Splitter side="right" widths={widths} setWidths={setWidths} />
         <Inspector />
       </div>
       <Timeline />
@@ -145,6 +148,26 @@ export default function Editor() {
       )}
     </div>
   );
+}
+
+// Drag handle between a side panel and the preview. Widths persist; double-click restores the default.
+const SIDE = { left: ['.left', 'leftWidth', 250, 760], right: ['.right', 'rightWidth', 260, 720] };
+function Splitter({ side, widths, setWidths }) {
+  const [sel, key, min, max] = SIDE[side];
+  const start = (e) => {
+    e.preventDefault();
+    const x0 = e.clientX, w0 = document.querySelector(sel).offsetWidth;
+    // Keep at least ~320px for the preview between both panels.
+    const other = document.querySelector(SIDE[side === 'left' ? 'right' : 'left'][0]).offsetWidth;
+    const top = Math.max(min, Math.min(max, window.innerWidth - other - 320));
+    let w = w0;
+    const move = (ev) => { w = Math.round(Math.max(min, Math.min(top, w0 + (side === 'left' ? 1 : -1) * (ev.clientX - x0)))); setWidths((s) => ({ ...s, [side]: w })); };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); document.body.classList.remove('col-resizing'); localStorage.setItem(key, String(w)); };
+    document.body.classList.add('col-resizing');
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+  const reset = () => { localStorage.removeItem(key); setWidths((s) => ({ ...s, [side]: 0 })); };
+  return <div className={`side-resize sr-${side}`} onPointerDown={start} onDoubleClick={reset} title="Arrastra para cambiar el ancho (doble clic: restablecer)" />;
 }
 
 const ASPECT_USES = {
@@ -185,7 +208,7 @@ function AspectPicker({ value, onChange }) {
 
 function ShortcutHelp({ onClose }) {
   const rows = [
-    ['Espacio', 'Reproducir / pausar'], ['S  o  Ctrl+B', 'Dividir en el cursor'], ['Q / W', 'Borrar a la izquierda / derecha del cursor'], ['Supr', 'Eliminar selección'],
+    ['Espacio', 'Reproducir / pausar'], ['S  o  Ctrl+B', 'Dividir en el cursor'], ['Q / W', 'Borrar a la izquierda / derecha del cursor'], ['Supr', 'Eliminar selección (clips o medios)'],
     ['Ctrl+Z / Ctrl+Y', 'Deshacer / rehacer'], ['Ctrl+C / X / V', 'Copiar / cortar / pegar'], ['Ctrl+D', 'Duplicar'],
     ['← / →', 'Fotograma anterior / siguiente'], ['Shift+← / →', '±1 segundo'], ['J / L', '±5 segundos'], ['Inicio / Fin', 'Ir al inicio / final'],
     ['Ctrl + / Ctrl −', 'Zoom de la línea de tiempo'], ['M', 'Agregar marcador'], ['Ctrl+A', 'Seleccionar todo'], ['Ctrl+E', 'Exportar'],

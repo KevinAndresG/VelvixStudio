@@ -136,7 +136,7 @@ export function removeMedia(ids) {
     p.clips = p.clips.filter((c) => !gone.has(c.id));
     packMain(p); cleanupTracks(p);
   });
-  if (gone.size) setState({ selection: getState().selection.filter((id) => !gone.has(id)) });
+  setState({ selection: getState().selection.filter((id) => !gone.has(id)), mediaSel: getState().mediaSel.filter((id) => !ids.includes(id)) });
   toast(`${ids.length === 1 ? 'Archivo eliminado' : `${ids.length} archivos eliminados`} del proyecto (Ctrl+Z para deshacer)`);
 }
 export const unusedMedia = (p) => p.media.filter((m) => !p.clips.some((c) => c.mediaId === m.id));

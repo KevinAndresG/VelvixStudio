@@ -5,6 +5,7 @@ let state = {
   view: 'home', // 'home' | 'editor'
   project: null,
   selection: [], // clip ids
+  mediaSel: [], // media ids selected in the Medios panel (Supr removes them)
   time: 0,
   playing: false,
   zoom: 80, // px per second
@@ -20,7 +21,9 @@ const emit = () => listeners.forEach((l) => l());
 
 export const getState = () => state;
 export function setState(patch) {
-  state = { ...state, ...(typeof patch === 'function' ? patch(state) : patch) };
+  const p = typeof patch === 'function' ? patch(state) : patch;
+  // Selecting clips takes the focus away from the media panel, so Supr deletes clips again.
+  state = { ...state, ...(p.selection && p.selection.length && !('mediaSel' in p) ? { mediaSel: [] } : null), ...p };
   emit();
 }
 export const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };

@@ -701,6 +701,15 @@ const OUT = path.win32.normalize(path.join(S, 'out.mp4'));
   }
   if (v8.status !== 0 && fails.length === n8) fails.push(`verify8 terminó con código ${v8.status} ${(v8.stderr || '').slice(-300)}`);
 
+  // ---------- v1.8.1: seleccionar medios + Supr, cuadrícula compacta, paneles laterales redimensionables ----------
+  const n9 = fails.length;
+  const v9 = cp3.spawnSync(process.execPath, [path.join(__dirname, 'verify9.cjs')], { env: process.env, encoding: 'utf8', timeout: 300000 });
+  for (const line of (v9.stdout || '').split('\n')) {
+    if (/^(OK|FAIL) /.test(line)) { console.log(line); if (line.startsWith('FAIL')) fails.push(line.slice(5).split(' — ')[0]); }
+    else if (/^ERRORS: ./.test(line)) errors.push('verify9 ' + line);
+  }
+  if (v9.status !== 0 && fails.length === n9) fails.push(`verify9 terminó con código ${v9.status} ${(v9.stderr || '').slice(-300)}`);
+
   console.log('ERRORS:', errors.join('\n'));
   console.log(fails.length ? 'FAILS: ' + fails.join(', ') : 'ALL OK');
   if (fails.length || errors.length) process.exit(1);
