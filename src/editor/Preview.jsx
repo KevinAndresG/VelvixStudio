@@ -24,10 +24,13 @@ export default function Preview() {
   const playing = useStore((s) => s.playing);
   const time = useStore((s) => s.time);
   const selection = useStore((s) => s.selection);
-  const wrapRef = useRef(null), canvasRef = useRef(null), stageRef = useRef(null), boxPending = useRef(false);
+  const mainRef = useRef(null), wrapRef = useRef(null), canvasRef = useRef(null), stageRef = useRef(null), boxPending = useRef(false);
   const [box, setBox] = useState({ w: 640, h: 360 });
   const [guides, setGuides] = useState({ v: false, h: false });
   const [, force] = useState(0);
+  const [full, setFull] = useState(false);
+  useEffect(() => { const f = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', f); return () => document.removeEventListener('fullscreenchange', f); }, []);
+  const toggleFull = () => (document.fullscreenElement ? document.exitFullscreen() : mainRef.current.requestFullscreen());
   const duration = projectDuration(project);
 
   // Fit the stage inside the available area keeping the project aspect ratio.
@@ -156,7 +159,7 @@ export default function Preview() {
   const step = (d) => setState({ time: Math.max(0, Math.min(duration, time + d)), playing: false });
 
   return (
-    <main className="preview">
+    <main className="preview" ref={mainRef}>
       <div className="stage-wrap" ref={wrapRef}
         onDragOver={(e) => e.preventDefault()}
         onDrop={async (e) => {
@@ -193,7 +196,7 @@ export default function Preview() {
         </div>
         <div className="pb-right">
           <IconBtn icon="camera" title="Guardar fotograma como imagen" onClick={snapshot} size={16} />
-          <IconBtn icon="max" title="Pantalla completa" onClick={() => wrapRef.current.requestFullscreen()} size={16} />
+          <IconBtn icon={full ? 'min' : 'max'} title={full ? 'Salir de pantalla completa (Esc)' : 'Pantalla completa'} onClick={toggleFull} size={16} />
         </div>
       </div>
     </main>
