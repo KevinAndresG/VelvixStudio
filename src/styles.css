@@ -332,8 +332,7 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .track.main { background: rgba(124,92,255,.04); }
 .track.hidden { opacity: .4; }
 .track.drop { background: rgba(124,92,255,.1); }
-.clip { position: absolute; top: 3px; border-radius: 6px; overflow: hidden; cursor: grab; border: 1.5px solid transparent; background: #2a3550; color: #fff; }
-.clip:active { cursor: grabbing; }
+.clip { position: absolute; top: 3px; border-radius: 6px; overflow: hidden; cursor: default; border: 1.5px solid transparent; background: #2a3550; color: #fff; }
 .clip.c-video, .clip.c-image { background: #24304a; }
 .clip.c-audio { background: #12403a; }
 .clip.c-text { background: #6a3b8c; }
@@ -354,7 +353,9 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .badge { font-size: 9.5px; background: rgba(0,0,0,.55); border-radius: 3px; padding: 0 4px; font-weight: 600; }
 .trans-mark { position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 20px; background: rgba(255,255,255,.85); color: #222; border-radius: 0 5px 5px 0; display: grid; place-items: center; font-size: 11px; pointer-events: none; }
 .fades { position: absolute; inset: 0; pointer-events: none; } .fades polygon { fill: rgba(0,0,0,.4); }
-.kf-dot { position: absolute; bottom: 1px; transform: translateX(-50%); color: var(--yellow); font-size: 9px; pointer-events: none; text-shadow: 0 0 2px #000; }
+.kf-dot { position: absolute; bottom: 0; transform: translateX(-50%); color: var(--yellow); font-size: 13px; line-height: 14px; padding: 0 3px; z-index: 4; cursor: grab; text-shadow: 0 0 2px #000; }
+.kf-dot:hover { color: #fff; } .kf-dot:active { cursor: grabbing; }
+.kf-dot.on { color: #fff; text-shadow: 0 0 0 2px var(--acc2), 0 0 5px var(--acc2); }
 .trim { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; z-index: 3; }
 .trim.l { left: 0; } .trim.r { right: 0; }
 .clip.sel .trim { background: rgba(255,255,255,.95); }

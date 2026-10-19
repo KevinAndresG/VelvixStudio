@@ -697,17 +697,39 @@ function StyleTab({ clip, edit }) {
   );
 }
 
+// Where an effect clip acts: everything below it (default) or one clip / one track, with an on/off switch that keeps the link.
+function EffectLink({ clip, edit }) {
+  const project = useStore((s) => s.project);
+  const l = clip.link, on = !!l && l.on !== false;
+  const opts = { '': 'Todo lo de abajo' };
+  for (const c of project.clips) if (c.type !== 'effect' && c.type !== 'audio') opts['clip:' + c.id] = '🎬 ' + (c.type === 'text' ? (c.text.badge ? c.name : c.text.content) : c.name || c.type);
+  for (const t of project.tracks) if (t.kind !== 'audio') opts['track:' + t.id] = '☰ Pista: ' + (t.main ? 'Principal' : t.name);
+  const value = l ? `${l.kind}:${l.id}` : '';
+  return (
+    <Section title="Aplicar a">
+      <Select value={opts[value] ? value : ''} options={opts} onChange={(v) => edit((c) => {
+        if (!v) { c.link = null; return; }
+        const i = v.indexOf(':'); c.link = { kind: v.slice(0, i), id: v.slice(i + 1), on: true };
+      })} />
+      {l && <Toggle label="Enlace activo" value={on} onChange={(v) => edit((c) => { c.link.on = v; })} />}
+      <p className="hint">{on ? 'Solo afecta al clip o pista elegido (mientras el efecto esté sobre él en el tiempo).' : 'Afecta a todas las capas debajo de la pista de efectos durante su duración.'}</p>
+    </Section>
+  );
+}
+
 function EffectTab({ clip, edit }) {
   if (clip.filter) {
     const set = (k, v, key) => edit((c) => { c.filter[k] = v; }, key);
-    return <><FilterControls f={clip.filter} set={set} clip={clip} edit={edit} /><ColorTab clip={clip} edit={edit} /></>;
+    return <><EffectLink clip={clip} edit={edit} /><FilterControls f={clip.filter} set={set} clip={clip} edit={edit} /><ColorTab clip={clip} edit={edit} /></>;
   }
   return (
-    <Section title="Efecto">
-      <Select value={clip.effect.type} options={EFFECTS} onChange={(v) => edit((c) => { c.effect.type = v; c.name = v; })} />
-      <Slider label="Intensidad" value={clip.effect.intensity} min={0} max={100} onChange={(v) => edit((c) => { c.effect.intensity = v; }, 'ei')} reset={50} />
-      <p className="hint">Afecta a todas las capas debajo de la pista de efectos durante su duración.</p>
-    </Section>
+    <>
+      <EffectLink clip={clip} edit={edit} />
+      <Section title="Efecto">
+        <Select value={clip.effect.type} options={EFFECTS} onChange={(v) => edit((c) => { c.effect.type = v; c.name = v; })} />
+        <Slider label="Intensidad" value={clip.effect.intensity} min={0} max={100} onChange={(v) => edit((c) => { c.effect.intensity = v; }, 'ei')} reset={50} />
+      </Section>
+    </>
   );
 }
 

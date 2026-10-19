@@ -62,7 +62,7 @@ function FilmStrip({ clip, media, width, height }) {
   return <div className="strip" style={{ height }}>{tiles}</div>;
 }
 
-function Clip({ clip, track, project, zoom, selected, ghost, onDown, onTrim, onContext }) {
+function Clip({ clip, track, project, zoom, selected, ghost, selKf, onDown, onTrim, onContext, onKf }) {
   const media = mediaOf(project, clip);
   const left = (ghost ? ghost.start : clip.start) * zoom, width = Math.max(4, clip.duration * zoom);
   const h = rowH(track) - 6;
@@ -82,6 +82,7 @@ function Clip({ clip, track, project, zoom, selected, ghost, onDown, onTrim, onC
         {clip.reverse && <b className="badge">⟲</b>}
         {clip.detached && <b className="badge" title="Audio separado">🔇</b>}
         {clip.fxPath && <b className="badge" title="Efecto de voz">FX</b>}
+        {clip.link && clip.link.on !== false && <b className="badge" title="Efecto enlazado a un clip o pista">🔗</b>}
         {clip.filter && clip.filter.preset !== 'none' && clip.type !== 'effect' && <b className="badge">◐</b>}
         <span>{label}</span>
         {clip.type !== 'text' && clip.type !== 'effect' && <em>{fmtTime(clip.duration)}</em>}
@@ -93,7 +94,10 @@ function Clip({ clip, track, project, zoom, selected, ghost, onDown, onTrim, onC
           {clip.fadeOut > 0 && <polygon points={`${width},${h} ${width - clip.fadeOut * zoom},0 ${width},0`} />}
         </svg>
       )}
-      {selected && kfTimes.map((t) => <span key={t} className="kf-dot" style={{ left: t * zoom }}>◆</span>)}
+      {selected && kfTimes.map((t) => (
+        <span key={t} className={`kf-dot ${selKf && selKf.clipId === clip.id && Math.abs(selKf.t - t) < 1e-4 ? 'on' : ''}`} style={{ left: t * zoom }}
+          title="Clic: ir a este fotograma clave · Arrastra: moverlo · Supr: borrarlo" onPointerDown={(e) => onKf(e, clip, t)}>◆</span>
+      ))}
       {!track.locked && <>
         <i className="trim l" onPointerDown={(e) => onTrim(e, clip, 'l')} />
         <i className="trim r" onPointerDown={(e) => onTrim(e, clip, 'r')} />
@@ -135,6 +139,7 @@ export default function Timeline() {
   const zoom = useStore((s) => s.zoom);
   const time = useStore((s) => s.time);
   const selection = useStore((s) => s.selection);
+  const selKf = useStore((s) => s.selKf);
   const snap = useStore((s) => s.snap);
   const magnet = useStore((s) => s.magnet);
   const playing = useStore((s) => s.playing);
@@ -343,6 +348,33 @@ export default function Timeline() {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
   };
 
+  // Keyframe diamond: click parks the playhead exactly on it, dragging moves every property keyframed at that time.
+  const onKf = (e, clip, t0) => {
+    if (e.button !== 0) return;
+    e.stopPropagation(); e.preventDefault();
+    const fps = getState().project.fps, x0 = e.clientX, key = `kfmove-${clip.id}-${Date.now()}`;
+    let cur = t0, moved = false;
+    setState({ selection: [clip.id], selKf: { clipId: clip.id, t: t0 }, time: clip.start + t0, playing: false });
+    const move = (ev) => {
+      if (!moved && Math.abs(ev.clientX - x0) < 3) return;
+      moved = true;
+      const nt = clamp(Math.round((xToTime(ev.clientX) - clip.start) * fps) / fps, 0, clip.duration);
+      if (Math.abs(nt - cur) < 1e-6) return;
+      const from = cur; cur = nt;
+      update((p) => {
+        const c = p.clips.find((x) => x.id === clip.id);
+        for (const k of Object.keys(c.kf || {})) {
+          const mv = c.kf[k].filter((f) => Math.abs(f.t - from) < 1e-4);
+          if (!mv.length) continue;
+          c.kf[k] = c.kf[k].filter((f) => !mv.includes(f) && Math.abs(f.t - nt) >= 1e-4).concat(mv.map((f) => ({ ...f, t: nt }))).sort((a, b) => a.t - b.t);
+        }
+      }, key);
+      setState({ selKf: { clipId: clip.id, t: nt }, time: clip.start + nt });
+    };
+    const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
+  };
+
   const onTrim = (e, clip, side) => {
     e.stopPropagation(); e.preventDefault();
     setState({ selection: [clip.id] });
@@ -457,7 +489,7 @@ export default function Timeline() {
                   {project.clips.filter((c) => c.trackId === t.id).map((c) => (
                     <Clip key={c.id} clip={c} track={t} project={project} zoom={zoom} selected={selection.includes(c.id)}
                       ghost={drag && drag.ids.includes(c.id) ? { start: Math.max(0, c.start + drag.dt) } : null}
-                      onDown={onClipDown} onTrim={onTrim} onContext={onContext} />
+                      selKf={selKf} onDown={onClipDown} onTrim={onTrim} onContext={onContext} onKf={onKf} />
                   ))}
                 </div>
               ))}

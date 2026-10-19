@@ -5,6 +5,7 @@ let state = {
   view: 'home', // 'home' | 'editor'
   project: null,
   selection: [], // clip ids
+  selKf: null, // selected keyframe diamond { clipId, t }: Supr deletes it
   mediaSel: [], // media ids selected in the Medios panel (Supr removes them)
   time: 0,
   playing: false,
@@ -23,7 +24,7 @@ export const getState = () => state;
 export function setState(patch) {
   const p = typeof patch === 'function' ? patch(state) : patch;
   // Selecting clips takes the focus away from the media panel, so Supr deletes clips again.
-  state = { ...state, ...(p.selection && p.selection.length && !('mediaSel' in p) ? { mediaSel: [] } : null), ...p };
+  state = { ...state, ...(p.selection && p.selection.length && !('mediaSel' in p) ? { mediaSel: [] } : null), ...(p.selection && !('selKf' in p) ? { selKf: null } : null), ...p };
   emit();
 }
 export const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };

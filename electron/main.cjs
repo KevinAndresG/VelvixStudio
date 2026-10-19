@@ -113,8 +113,8 @@ app.whenReady().then(async () => {
     if (!file.startsWith(dist)) return new Response('forbidden', { status: 403 });
     return serveFile(file, req);
   });
-  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(['local-fonts', 'clipboard-sanitized-write', 'media'].includes(perm)));
-  session.defaultSession.setPermissionCheckHandler((_wc, perm) => ['local-fonts', 'clipboard-sanitized-write'].includes(perm));
+  session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(['local-fonts', 'clipboard-sanitized-write', 'media', 'fullscreen'].includes(perm)));
+  session.defaultSession.setPermissionCheckHandler((_wc, perm) => ['local-fonts', 'clipboard-sanitized-write', 'fullscreen'].includes(perm));
   createWindow();
 });
 app.on('window-all-closed', () => app.quit());

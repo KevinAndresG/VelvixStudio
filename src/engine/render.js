@@ -10,7 +10,7 @@ function scratch(key, w, h) {
   if (!c) { c = document.createElement('canvas'); pool.set(key, c); }
   if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
   const x = c.getContext('2d');
-  x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; x.filter = 'none';
+  x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.globalCompositeOperation = 'source-over'; x.filter = 'none'; x.clearRect(0, 0, w, h); // transparent layers must not show the previous frame
   return [c, x];
 }
 const rand = (n) => { const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); };
@@ -671,6 +671,34 @@ export function activeVisual(project, t) {
   return out;
 }
 
+// Effects that move/rescale the picture: they are not clipped to the linked clip's original shape.
+const MOTION_FX = new Set(['shake', 'zoomPulse', 'heartbeat', 'fisheye', 'mirror', 'kaleido', 'split3', 'pixelate', 'blurIn', 'bw']);
+
+// Runs one effect clip (preset effect or adjustment filter) over what is already drawn on ctx.
+// `shape`: the layer is transparent outside the linked clip, so keep results inside its pixels.
+function runEffectClip(ctx, c, t, W, H, shape) {
+  const pre = shape && c.effect && !MOTION_FX.has(c.effect.type) ? cloneLayer(ctx.canvas, 'fx-pre', W, H) : null;
+  if (c.effect && c.effect.type !== 'none') applyEffect(ctx, c.effect, t - c.start, c.duration, W, H);
+  if (c.filter) {
+    const f = effectiveFilter(groupAt(c, 'filter', t));
+    const g = needsGrade(f) ? grade(ctx.canvas, W, H, { l: 0, t: 0, r: 0, b: 0 }, f, null, W, H, Math.floor(t * 24)) : null;
+    const css = blurCss(f.blur, W);
+    if (g || css !== 'none') {
+      const [sc, sx] = scratch('fx-filter', W, H);
+      if (g) sx.drawImage(g.el, 0, g.h - H, W, H, 0, 0, W, H); else sx.drawImage(ctx.canvas, 0, 0);
+      ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); ctx.filter = css; ctx.drawImage(sc, 0, 0); ctx.restore();
+    }
+  }
+  if (pre) { ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.globalCompositeOperation = 'destination-in'; ctx.drawImage(pre, 0, 0); ctx.restore(); }
+}
+
+// An effect clip can be linked to one clip or one track ({ kind, id, on }): it then only touches that layer.
+export const effectLink = (project, c) => {
+  const l = c.type === 'effect' && c.link;
+  if (!l || l.on === false) return null;
+  return (l.kind === 'track' ? project.tracks.some((x) => x.id === l.id) : project.clips.some((x) => x.id === l.id && x.type !== 'effect')) ? l : null;
+};
+
 export function renderFrame(ctx, project, t, getDrawable, W, H) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over'; ctx.filter = 'none';
@@ -678,30 +706,42 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
   ctx.fillRect(0, 0, W, H);
   const items = activeVisual(project, t);
   const done = new Set();
+  const linked = items.map((i) => i.clip).filter((c) => c.type === 'effect' && t >= c.start && t < clipEnd(c) && effectLink(project, c));
+  const fxFor = (kind, id) => linked.filter((c) => c.link.kind === kind && c.link.id === id);
+  // Clips of a track with linked effects are drawn on their own layer, which gets the effects and is then laid over the frame.
+  let layerTrack = null, cx = ctx;
+  const flush = () => {
+    if (!layerTrack) return;
+    for (const e of fxFor('track', layerTrack)) runEffectClip(cx, e, t, W, H, true);
+    ctx.drawImage(cx.canvas, 0, 0);
+    layerTrack = null; cx = ctx;
+  };
   for (const it of items) {
     const c = it.clip;
+    if (it.track.id !== layerTrack) {
+      flush();
+      if (fxFor('track', it.track.id).length) { const [, lx] = scratch('fx-trk', W, H); lx.clearRect(0, 0, W, H); cx = lx; layerTrack = it.track.id; }
+    }
     if (done.has(c.id)) continue;
-    if (c.type === 'text') { if (t >= c.start && t < clipEnd(c)) drawText(ctx, c, t, W, H); continue; }
-    if (c.type === 'effect') {
+    if (c.type === 'text') {
       if (t >= c.start && t < clipEnd(c)) {
-        if (c.effect && c.effect.type !== 'none') applyEffect(ctx, c.effect, t - c.start, c.duration, W, H);
-        if (c.filter) {
-          const f = effectiveFilter(groupAt(c, 'filter', t));
-          // Adjustment layer: grades everything below it.
-          const g = needsGrade(f) ? grade(ctx.canvas, W, H, { l: 0, t: 0, r: 0, b: 0 }, f, null, W, H, Math.floor(t * 24)) : null;
-          const css = blurCss(f.blur, W);
-          if (g || css !== 'none') {
-            const [sc, sx] = scratch('fx-filter', W, H);
-            if (g) sx.drawImage(g.el, 0, g.h - H, W, H, 0, 0, W, H); else sx.drawImage(ctx.canvas, 0, 0);
-            ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.filter = css; ctx.drawImage(sc, 0, 0); ctx.restore();
-          }
-        }
+        const own = fxFor('clip', c.id);
+        if (own.length) {
+          const [lc, lx] = scratch('fx-clip', W, H); lx.clearRect(0, 0, W, H);
+          drawText(lx, c, t, W, H);
+          for (const e of own) runEffectClip(lx, e, t, W, H, true);
+          cx.drawImage(lc, 0, 0);
+        } else drawText(cx, c, t, W, H);
       }
+      continue;
+    }
+    if (c.type === 'effect') {
+      if (t >= c.start && t < clipEnd(c) && !effectLink(project, c)) runEffectClip(cx, c, t, W, H, false);
       continue;
     }
     const media = mediaOf(project, c);
     const d = getDrawable(c, media, t);
-    const bgFor = (clip, dr) => { if (it.track.main && project.background.type === 'blur') drawBackground(ctx, project.background, dr, W, H); };
+    const bgFor = (clip, dr) => { if (it.track.main && project.background.type === 'blur') drawBackground(cx, project.background, dr, W, H); };
     // Transition into this clip from the previous one (centered on the cut).
     const inTrans = it.tin > 0 && t < c.start + it.tin;
     const outTrans = it.tout > 0 && t >= clipEnd(c) - it.tout;
@@ -711,16 +751,23 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       const p = clamp((t - (cut - half)) / tr.duration, 0, 1);
       const dA = getDrawable(A, mediaOf(project, A), t), dB = getDrawable(B, mediaOf(project, B), t);
       bgFor(A, p < 0.5 ? dA : dB);
-      const la = cloneLayer(drawVisual(ctx, A, t, dA, W, H, { layer: true, layerKey: 'tA', media: mediaOf(project, A) }), 'tA2', W, H);
-      const lb = drawVisual(ctx, B, t, dB, W, H, { layer: true, layerKey: 'tB', media: mediaOf(project, B) });
-      drawTransition(ctx, tr.type, p, la, lb, W, H);
+      const la = cloneLayer(drawVisual(cx, A, t, dA, W, H, { layer: true, layerKey: 'tA', media: mediaOf(project, A) }), 'tA2', W, H);
+      const lb = drawVisual(cx, B, t, dB, W, H, { layer: true, layerKey: 'tB', media: mediaOf(project, B) });
+      drawTransition(cx, tr.type, p, la, lb, W, H);
       done.add(A.id); done.add(B.id);
       continue;
     }
     if (t < c.start || t >= clipEnd(c)) continue;
     bgFor(c, d);
-    drawVisual(ctx, c, t, d, W, H, { media });
+    const own = fxFor('clip', c.id);
+    if (own.length) {
+      const [lc, lx] = scratch('fx-clip', W, H); lx.clearRect(0, 0, W, H);
+      drawVisual(lx, { ...c, blend: 'source-over' }, t, d, W, H, { media });
+      for (const e of own) runEffectClip(lx, e, t, W, H, true);
+      cx.save(); cx.globalCompositeOperation = c.blend || 'source-over'; cx.drawImage(lc, 0, 0); cx.restore();
+    } else drawVisual(cx, c, t, d, W, H, { media });
   }
+  flush();
 }
 function cloneLayer(c, key, W, H) {
   if (!c) return null;

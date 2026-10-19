@@ -11,6 +11,17 @@ import { splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, add
 
 let clipboard = [];
 
+// Supr on a selected keyframe diamond removes the keyframes (every property) at that time.
+function deleteKeyframe() {
+  const k = getState().selKf; if (!k) return false;
+  update((p) => {
+    const c = p.clips.find((x) => x.id === k.clipId); if (!c) return;
+    for (const key of Object.keys(c.kf || {})) { c.kf[key] = c.kf[key].filter((f) => Math.abs(f.t - k.t) >= 1e-4); if (!c.kf[key].length) delete c.kf[key]; }
+  });
+  setState({ selKf: null });
+  return true;
+}
+
 function onKey(e) {
   const tag = e.target.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.target.isContentEditable) return;
@@ -23,7 +34,7 @@ function onKey(e) {
   else if ((k === 's' && !ctrl) || (ctrl && k === 'b')) { e.preventDefault(); splitAtPlayhead(); }
   else if (k === 'q' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('left'); }
   else if (k === 'w' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('right'); }
-  else if (k === 'delete' || k === 'backspace') { e.preventDefault(); if (s.mediaSel.length) askRemove(s.mediaSel); else deleteSelected(); }
+  else if (k === 'delete' || k === 'backspace') { e.preventDefault(); if (s.mediaSel.length) askRemove(s.mediaSel); else if (!deleteKeyframe()) deleteSelected(); }
   else if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
   else if (ctrl && k === 'c') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); }
   else if (ctrl && k === 'x') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); deleteSelected(); }
