@@ -37,18 +37,21 @@ function Waveform({ clip, media, width, height, color, mirror }) {
   const peaks = usePeaks(media && media.path);
   useEffect(() => {
     const c = ref.current; if (!c || !peaks) return;
-    const w = Math.min(Math.max(1, Math.round(width)), 8000), h = height;
+    // Device pixels (sharp on HiDPI); only very long clips at high zoom hit the canvas size cap and get scaled.
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = Math.min(Math.max(1, Math.round(width * dpr)), 30000), h = Math.round(height * dpr);
     c.width = w; c.height = h;
     const x = c.getContext('2d'), norm = normOf(peaks);
     x.clearRect(0, 0, w, h); x.fillStyle = color;
-    const sx = width / w;
+    const sx = width / w, zoom = getState().zoom;
     for (let i = 0; i < w; i++) {
-      const local = (i * sx) / getState().zoom;
+      const local = (i * sx) / zoom;
       let t = sourceTime(clip, clip.start + local, null);
       if (clip.reverse) t = 2 * clip.in + clip.duration * clip.speed - t;
-      const v = Math.pow(Math.min(1, (peaks[Math.floor(t * 50)] || 0) * norm * clip.volume * (clip.muted ? 0 : 1)), 0.6);
-      const bh = Math.max(1, v * h * 0.95);
-      x.fillRect(i, mirror ? (h - bh) / 2 : h - bh, 1, bh);
+      // Peaks are 50/s: blend neighbours so a zoomed-in wave is a smooth shape, not wide flat blocks.
+      const pos = t * 50, k = Math.floor(pos), fr = pos - k, pk = (peaks[k] || 0) * (1 - fr) + (peaks[k + 1] || 0) * fr;
+      const v = Math.pow(Math.min(1, pk * norm * clip.volume * (clip.muted ? 0 : 1)), 0.6);
+      const bh = Math.max(dpr, Math.round(v * h * 0.95));
+      x.fillRect(i, mirror ? Math.round((h - bh) / 2) : h - bh, 1, bh);
     }
   }, [peaks, width, height, clip.in, clip.speed, clip.curve, clip.volume, clip.muted, clip.reverse, clip.duration, color]);
   return <canvas ref={ref} className="wave" style={{ width, height }} />;
