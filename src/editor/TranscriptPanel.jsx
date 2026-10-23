@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useStore, setState, toast } from '../store.js';
+import { useStore, useUiTime, setState, toast } from '../store.js';
 import { fmtTime } from '../engine/model.js';
 import { Icon, Select, Slider } from '../ui.jsx';
 import { transcribe, captionsFromTranscript, WHISPER_MODELS, LANGS } from './captions.js';
@@ -8,7 +8,7 @@ import { cutRanges, wordRanges, fillerIndices, silenceRanges, timelineAudio, mer
 // Transcript-based editing: delete words to cut the video; one click to drop fillers and pauses.
 export default function TranscriptTab() {
   const words = useStore((s) => (s.project.transcript ? s.project.transcript.words : null));
-  const time = useStore((s) => s.time);
+  const time = useUiTime();
   const [model, setModel] = useState(() => localStorage.getItem('whisperModel') || 'onnx-community/whisper-base');
   const [lang, setLang] = useState('es');
   const [busy, setBusy] = useState(false);

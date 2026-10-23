@@ -1,7 +1,7 @@
 // Color pro: scopes, LUT (.cube), lift/gamma/gain wheels, RGB curves, HSL per color and skin smoothing.
 // Everything lives in clip.filter, so it is graded by gl.js in preview and export alike.
 import React, { useEffect, useRef, useState } from 'react';
-import { useStore, toast } from '../store.js';
+import { useStore, useUiTime, toast } from '../store.js';
 import { propAt, setProp, clamp } from '../engine/model.js';
 import { curveFn, parseCube } from '../engine/gl.js';
 import { Slider, Section } from '../ui.jsx';
@@ -108,7 +108,7 @@ function WheelsSection({ clip, edit }) {
   );
 }
 function Wheel({ clip, edit, k, label }) {
-  const time = useStore((s) => s.time);
+  const time = useUiTime();
   const ref = useRef(null);
   const x = propAt(clip, `filter.${k}X`, time), y = propAt(clip, `filter.${k}Y`, time);
   const put = (nx, ny, key) => edit((c, p) => { setProp(c, `filter.${k}X`, nx, time, p.fps); setProp(c, `filter.${k}Y`, ny, time, p.fps); }, key);

@@ -7,7 +7,7 @@ import {
   packMain, ensureTrack, cleanupTracks, addToTimeline, importPaths, trackName,
 } from './actions.js';
 
-const ROW_H = { main: 66, video: 54, text: 34, effect: 34, audio: 48 };
+const ROW_H = { main: 70, video: 54, text: 34, effect: 34, audio: 64 };
 const rowH = (t) => (t.main ? ROW_H.main : ROW_H[t.kind]);
 const HEAD_W = 132;
 const kindFor = (c) => (c.type === 'image' ? 'video' : c.type);
@@ -24,23 +24,31 @@ function usePeaks(path) {
   return p;
 }
 
-function Waveform({ clip, media, width, height, color }) {
+// Loudest peak of a file: quiet recordings are scaled up so speech and silences stand apart.
+const peakNorm = new WeakMap();
+function normOf(pk) {
+  let n = peakNorm.get(pk);
+  if (!n) { let m = 0; for (let i = 0; i < pk.length; i++) if (pk[i] > m) m = pk[i]; n = m > 0.01 ? 1 / m : 1; peakNorm.set(pk, n); }
+  return n;
+}
+
+function Waveform({ clip, media, width, height, color, mirror }) {
   const ref = useRef(null);
   const peaks = usePeaks(media && media.path);
   useEffect(() => {
     const c = ref.current; if (!c || !peaks) return;
     const w = Math.min(Math.max(1, Math.round(width)), 8000), h = height;
     c.width = w; c.height = h;
-    const x = c.getContext('2d');
+    const x = c.getContext('2d'), norm = normOf(peaks);
     x.clearRect(0, 0, w, h); x.fillStyle = color;
     const sx = width / w;
     for (let i = 0; i < w; i++) {
       const local = (i * sx) / getState().zoom;
       let t = sourceTime(clip, clip.start + local, null);
       if (clip.reverse) t = 2 * clip.in + clip.duration * clip.speed - t;
-      const v = (peaks[Math.floor(t * 50)] || 0) * clip.volume * (clip.muted ? 0 : 1);
-      const bh = Math.max(1, Math.min(1, v) * h * 0.95);
-      x.fillRect(i, h - bh, 1, bh);
+      const v = Math.pow(Math.min(1, (peaks[Math.floor(t * 50)] || 0) * norm * clip.volume * (clip.muted ? 0 : 1)), 0.6);
+      const bh = Math.max(1, v * h * 0.95);
+      x.fillRect(i, mirror ? (h - bh) / 2 : h - bh, 1, bh);
     }
   }, [peaks, width, height, clip.in, clip.speed, clip.curve, clip.volume, clip.muted, clip.reverse, clip.duration, color]);
   return <canvas ref={ref} className="wave" style={{ width, height }} />;
@@ -74,9 +82,9 @@ function Clip({ clip, track, project, zoom, selected, ghost, selKf, onDown, onTr
       onPointerDown={(e) => onDown(e, clip)} onContextMenu={(e) => onContext(e, clip)} title={label}>
       {(clip.type === 'video' || clip.type === 'image') && <FilmStrip clip={clip} media={media} width={width} height={h} />}
       {clip.type === 'video' && media && media.hasAudio && !clip.detached && track.main && (
-        <div className="clip-wave"><Waveform clip={clip} media={media} width={width} height={14} color="rgba(255,255,255,.55)" /></div>
+        <div className="clip-wave"><Waveform clip={clip} media={media} width={width} height={24} color="rgba(255,255,255,.7)" /></div>
       )}
-      {clip.type === 'audio' && <Waveform clip={clip} media={media} width={width} height={h - 14} color="rgba(120,255,210,.75)" />}
+      {clip.type === 'audio' && <Waveform clip={clip} media={media} width={width} height={h - 6} color="rgba(120,255,210,.85)" mirror />}
       <div className="clip-label">
         {(clip.speed !== 1 || clip.curve) && <b className="badge">{clip.curve ? '〰 ' : ''}{+clip.speed.toFixed(2)}×</b>}
         {clip.reverse && <b className="badge">⟲</b>}
@@ -117,6 +125,19 @@ function Ruler({ zoom, width, fps, onSeek }) {
   return <div className="ruler" style={{ width }} onPointerDown={onSeek}>{ticks}</div>;
 }
 
+// Own subscriber: only the playhead re-renders on every frame of playback, not the whole timeline.
+function Playhead({ zoom, scrollRef, onSeek }) {
+  const time = useStore((s) => s.time);
+  const playing = useStore((s) => s.playing);
+  // Keep the playhead visible during playback.
+  useEffect(() => {
+    const el = scrollRef.current; if (!el || !playing) return;
+    const x = time * zoom;
+    if (x > el.scrollLeft + el.clientWidth - 60 || x < el.scrollLeft) el.scrollLeft = x - 80;
+  }, [time, playing, zoom]);
+  return <div className="playhead" style={{ left: time * zoom }} onPointerDown={(e) => { e.stopPropagation(); onSeek(e); }}><i /></div>;
+}
+
 function TrackHead({ track, onDown, dragging }) {
   const set = (k) => update((p) => { const t = p.tracks.find((x) => x.id === track.id); t[k] = !t[k]; });
   const icon = { video: 'film', audio: 'music', text: 'type', effect: 'sparkles' }[track.kind];
@@ -137,12 +158,10 @@ function TrackHead({ track, onDown, dragging }) {
 export default function Timeline() {
   const project = useStore((s) => s.project);
   const zoom = useStore((s) => s.zoom);
-  const time = useStore((s) => s.time);
   const selection = useStore((s) => s.selection);
   const selKf = useStore((s) => s.selKf);
   const snap = useStore((s) => s.snap);
   const magnet = useStore((s) => s.magnet);
-  const playing = useStore((s) => s.playing);
   const scrollRef = useRef(null);
   const [drag, setDrag] = useState(null); // { ids, dt, trackId }
   const [menu, setMenu] = useState(null);
@@ -158,13 +177,6 @@ export default function Timeline() {
     ro.observe(scrollRef.current); return () => ro.disconnect();
   }, []);
   const contentW = Math.max(viewW, (duration + 20) * zoom);
-
-  // Keep the playhead visible during playback.
-  useEffect(() => {
-    const el = scrollRef.current; if (!el || !playing) return;
-    const x = time * zoom;
-    if (x > el.scrollLeft + el.clientWidth - 60 || x < el.scrollLeft) el.scrollLeft = x - 80;
-  }, [time, playing, zoom]);
 
   // Ctrl+wheel zooms around the cursor.
   useEffect(() => {
@@ -503,7 +515,7 @@ export default function Timeline() {
                 onContextMenu={(e) => { e.preventDefault(); update((p) => { p.markers = p.markers.filter((x) => x.id !== m.id); }); }} />
             ))}
             {snapLine != null && <div className="snap-line" style={{ left: snapLine * zoom }} />}
-            <div className="playhead" style={{ left: time * zoom }} onPointerDown={(e) => { e.stopPropagation(); seekFrom(e); }}><i /></div>
+            <Playhead zoom={zoom} scrollRef={scrollRef} onSeek={seekFrom} />
           </div>
         </div>
       </div>

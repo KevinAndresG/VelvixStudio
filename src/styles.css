@@ -342,7 +342,7 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .clip.missing { background: repeating-linear-gradient(45deg, #3a1720 0 8px, #2a1018 8px 16px); }
 .strip { position: absolute; inset: 0; background-repeat: repeat-x; opacity: .9; }
 .strip i { position: absolute; top: 0; background-repeat: no-repeat; }
-.clip-wave { position: absolute; left: 0; right: 0; bottom: 0; height: 14px; background: rgba(0,0,0,.45); }
+.clip-wave { position: absolute; left: 0; right: 0; bottom: 0; height: 24px; background: rgba(0,0,0,.5); }
 .wave { position: absolute; left: 0; bottom: 0; display: block; }
 .clip.c-audio .wave { bottom: 0; }
 .clip-label { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 4px; padding: 2px 8px; font-size: 11px; white-space: nowrap; overflow: hidden;

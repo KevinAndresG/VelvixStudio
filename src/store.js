@@ -29,6 +29,8 @@ export function setState(patch) {
 }
 export const subscribe = (l) => { listeners.add(l); return () => listeners.delete(l); };
 export const useStore = (sel) => useSyncExternalStore(subscribe, () => sel(state));
+// Playhead time for panels that only show it: while playing it ticks at 10 Hz so they don't re-render every frame.
+export const useUiTime = () => useStore((s) => (s.playing ? Math.round(s.time * 10) / 10 : s.time));
 
 let lastKey = null, lastAt = 0;
 // fn mutates a draft copy. `key` coalesces rapid edits (slider drags) into one undo step.

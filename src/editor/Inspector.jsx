@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useStore, getState, update, toast } from '../store.js';
+import { useStore, useUiTime, getState, update, toast } from '../store.js';
 import {
   FILTER_PRESETS, ANIM_IN, ANIM_OUT, ANIM_LOOP, BLEND_MODES, VOICES, TEXT_PRESETS, EFFECTS, TRANSITIONS, FONTS,
   DEFAULT_TEXT, TEXT_GROUPS, DEFAULT_FILTER, mediaOf, propAt, setProp, toggleKeyframe, kfsAt, fmtTime, clipEnd, WORD_ANIMS,
@@ -103,7 +103,7 @@ function ClipPanel({ clip, project, count }) {
 
 // ---------- keyframe-aware slider (transform, filter.*, mask.*, volume) ----------
 export function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, reset, edit }) {
-  const time = useStore((s) => s.time);
+  const time = useUiTime();
   const fps = useStore((s) => s.project.fps);
   const list = (clip.kf && clip.kf[prop]) || [];
   const local = time - clip.start;
@@ -128,7 +128,7 @@ export function KfSlider({ clip, prop, label, min, max, step, unit, scale = 1, r
 
 // Easing of the keyframes under the playhead: presets + draggable cubic-bezier handles.
 function EaseSection({ clip }) {
-  const time = useStore((s) => s.time);
+  const time = useUiTime();
   const fps = useStore((s) => s.project.fps);
   const svg = useRef(null);
   const ks = kfsAt(clip, time, fps);
@@ -403,7 +403,7 @@ function SpeedTab({ clip, media }) {
 
 // Speed curve editor: x = position in the clip, y = relative speed on a log scale (0.1× … 10×).
 function CurveEditor({ clip }) {
-  const time = useStore((s) => s.time);
+  const time = useUiTime();
   const svg = useRef(null);
   const W = 260, H = 120, pts = clip.curve;
   const X = (x) => x * W, Y = (y) => H / 2 - (Math.log10(y) * H) / 2;

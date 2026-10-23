@@ -123,10 +123,13 @@ export class SourcePool {
     const el = e.el;
     // A seeking element draws blank: show the last frame instead (scrubbing, playback above 16×).
     if (el.seeking || el.readyState < 2 || !el.videoWidth) return e.still ? { el: e.still, w: e.still.width, h: e.still.height } : null;
-    if (el.paused && this.mode === 'preview' && e.stillT !== el.currentTime) {
+    // Paused: keep the exact frame. Playing: refresh the fallback twice a second, so a stalled/seeking element
+    // shows a recent frame instead of a frozen old one.
+    if (this.mode === 'preview' && (el.paused ? e.stillT !== el.currentTime : performance.now() - (e.stillAt || 0) > 500)) {
       const c = (e.still = e.still || document.createElement('canvas'));
-      if (c.width !== el.videoWidth || c.height !== el.videoHeight) { c.width = el.videoWidth; c.height = el.videoHeight; }
-      c.getContext('2d').drawImage(el, 0, 0); e.stillT = el.currentTime;
+      const k = el.paused ? 1 : Math.min(1, 640 / el.videoWidth), cw = Math.round(el.videoWidth * k), ch = Math.round(el.videoHeight * k);
+      if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch; }
+      c.getContext('2d').drawImage(el, 0, 0, cw, ch); e.stillT = el.currentTime; e.stillAt = performance.now();
     }
     return { el, w: el.videoWidth, h: el.videoHeight };
   };
@@ -177,7 +180,7 @@ export class SourcePool {
       if (el.paused) { el.playbackRate = Math.max(0.0625, speed); el.currentTime = want; el.play().catch(() => {}); return; }
       // Drift in timeline seconds (a source-seconds tolerance would allow seconds of lag at 0.1×).
       const lag = (want - el.currentTime) / speed;
-      if (Math.abs(lag) > 0.3) { if (!el.seeking) el.currentTime = want; return; }
+      if (Math.abs(lag) > 0.5) { if (!el.seeking && performance.now() - (el._seekAt || 0) > 400) { el.currentTime = want; el._seekAt = performance.now(); } return; }
       // Small drift (speed curves change the rate every frame): nudge the rate instead of seeking.
       const rate = Math.max(0.0625, Math.min(16, speed * (Math.abs(lag) < 0.02 ? 1 : 1 + clamp(lag * 3, -0.3, 0.3))));
       if (Math.abs(el.playbackRate - rate) > rate * 0.01) el.playbackRate = rate;
