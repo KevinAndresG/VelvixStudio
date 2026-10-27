@@ -107,7 +107,7 @@ export default function Home() {
     if (ps.length > 1) toast(`${ps.length} proyectos eliminados`);
   };
   const toggle = (id) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n); };
-  const openFolder = async () => { const { data } = await api.paths(); api.openPath(`${data}\projects`); };
+  const openFolder = async () => { const { data } = await api.paths(); api.openPath(`${data}/projects`); };
 
   const filtered = useMemo(() => (list || []).filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), [list, q]);
   const allSel = sel && filtered.length > 0 && filtered.every((p) => sel.has(p.id));
