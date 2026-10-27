@@ -204,18 +204,22 @@ export async function reframeClip(clipId) {
   return !!tr;
 }
 
+async function faceTracks(p, ids, label) {
+  return job(label, async (report, cancelled, id) => {
+    const out = {};
+    for (const [i, cid] of ids.entries()) {
+      const c = p.clips.find((x) => x.id === cid);
+      out[cid] = await faceTrack(c, mediaOf(p, c), (l, pr) => report(`${label} clip ${i + 1} de ${ids.length}…`, pr), cancelled, id);
+    }
+    return out;
+  });
+}
+
 // Whole project to another format (16:9 → 9:16…): every main-track clip follows its face. One undo step.
 export async function autoReframe(aspect = '9:16') {
   const p = getState().project, ids = p.clips.filter((c) => reframable(p, c)).map((c) => c.id);
   if (!ids.length) return toast('No hay clips en la pista principal'), 0;
-  const tracks = await job(`Reencuadre automático a ${aspect}…`, async (report, cancelled, id) => {
-    const out = {};
-    for (const [i, cid] of ids.entries()) {
-      const c = p.clips.find((x) => x.id === cid);
-      out[cid] = await faceTrack(c, mediaOf(p, c), (l, pr) => report(`Reencuadre: clip ${i + 1} de ${ids.length}…`, pr), cancelled, id);
-    }
-    return out;
-  }).catch((e) => failed('Reencuadre automático')(e) ?? false);
+  const tracks = await faceTracks(p, ids, `Reencuadre a ${aspect}:`).catch((e) => failed('Reencuadre automático')(e) ?? false);
   if (tracks === false) return 0;
   update((d) => {
     const [w, h] = ASPECTS[aspect];
@@ -225,6 +229,16 @@ export async function autoReframe(aspect = '9:16') {
   const faces = ids.filter((cid) => tracks[cid]).length;
   toast(`Formato ${aspect}: ${faces} de ${ids.length} clips siguen la cara`);
   return faces;
+}
+
+// Copy of a project in another format, reframed the same way (for exporting several formats at once).
+export async function reframedCopy(p, aspect) {
+  const ids = p.clips.filter((c) => reframable(p, c)).map((c) => c.id);
+  const tracks = ids.length ? await faceTracks(p, ids, `Reencuadre a ${aspect}:`) : {};
+  const d = structuredClone(p), [w, h] = ASPECTS[aspect];
+  Object.assign(d, { aspect, width: w, height: h });
+  for (const cid of ids) applyReframe(d, cid, tracks[cid]);
+  return d;
 }
 
 // ---------- #6 stabilization ----------

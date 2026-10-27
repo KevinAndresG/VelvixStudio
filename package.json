@@ -1,6 +1,6 @@
 {
   "name": "velvix-studio",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "description": "Editor de video Velvix Studio",
   "main": "electron/main.cjs",
   "scripts": {

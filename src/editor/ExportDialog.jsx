@@ -5,6 +5,7 @@ import { renderFrame } from '../engine/render.js';
 import { preloadLuts, preloadMattes } from '../engine/gl.js';
 import { ExportPool, audioSegments } from '../engine/sources.js';
 import { toSRT } from './captions.js';
+import { reframedCopy } from './vision.js';
 import { Icon, Select, Toggle, Modal } from '../ui.jsx';
 
 const RES = { 480: '480p', 720: '720p', 1080: '1080p (Full HD)', 1440: '2K', 2160: '4K' };
@@ -37,6 +38,8 @@ async function makeEncoder(W, H, fps, quality, onChunk, onError) {
 const concat = (parts) => { const n = parts.reduce((a, p) => a + p.byteLength, 0), out = new Uint8Array(n); let o = 0; for (const p of parts) { out.set(p, o); o += p.byteLength; } return out.buffer; };
 const safeName = (s) => s.replace(/[<>:"/\\|?*]+/g, '_').trim() || 'video';
 const num = (v, d) => (Number.isFinite(+v) ? +v : d);
+const MULTI = ['16:9', '9:16', '1:1'];
+const sigOf = (rp, W, H, fps, quality, a, b) => JSON.stringify([{ ...rp, updatedAt: 0, thumb: null, name: '', transcript: null, media: rp.media.map(({ missing, thumb, strip, ...m }) => m) }, W, H, fps, quality, a, b]);
 
 export default function ExportDialog({ onClose }) {
   const project = useStore((s) => s.project);
@@ -57,6 +60,7 @@ export default function ExportDialog({ onClose }) {
   const [from, setFrom] = useState(0);
   const [to, setTo] = useState(+duration.toFixed(2));
   const [resume, setResume] = useState(null);
+  const [extra, setExtra] = useState([]); // more formats exported after the main one, each reframed
   const [state, setStateL] = useState({ phase: 'setup' }); // setup | running | mux | done | error
   const cancelRef = useRef(false);
   const previewRef = useRef(null);
@@ -76,8 +80,7 @@ export default function ExportDialog({ onClose }) {
   const renderProject = useMemo(() => (burn ? project : { ...project, clips: project.clips.filter((c) => !c.caption) }), [project, burn]);
   // Identifies one export (content + settings): a checkpoint is only resumed for the very same export.
   // Only what changes the pixels: not name/dates/thumbnails or the `missing` flag openProject adds on reopen.
-  const sig = useMemo(() => JSON.stringify([{ ...renderProject, updatedAt: 0, thumb: null, name: '', transcript: null, media: renderProject.media.map(({ missing, thumb, strip, ...m }) => m) },
-    W, H, outFps, quality, a, b]), [renderProject, W, H, outFps, quality, a, b]);
+  const sig = useMemo(() => sigOf(renderProject, W, H, outFps, quality, a, b), [renderProject, W, H, outFps, quality, a, b]);
   const resumable = format === 'mp4' && !audioOnly;
   useEffect(() => { if (state.phase === 'setup' || state.phase === 'error') window.api.exportResumable(sig).then((r) => setResume(resumable ? r : null)); }, [sig, resumable, state.phase]);
 
@@ -120,18 +123,35 @@ export default function ExportDialog({ onClose }) {
       setState({ exporting: true }); // pauses the preview loop so export gets the GPU/main thread
       await Promise.all([preloadLuts(project), preloadMattes(project)]);
       const frames = Math.max(1, Math.ceil(span * outFps - 1e-6)); // float slack: 9.2000000001 s must stay 276 frames
-      const ok = await encodeFrames(job, frames, resumeFrom, t0);
+      const ok = await encodeFrames(job, frames, resumeFrom, t0, { proj: renderProject, W, H, sig });
       if (!ok) return;
       setStateL((s) => ({ ...s, phase: 'mux', progress: 0 }));
       const r = await window.api.exportFinish();
-      setStateL(r.ok ? { phase: 'done', out, secs: (performance.now() - t0) / 1000 } : { phase: 'error', error: r.error });
+      if (!r.ok) return setStateL({ phase: 'error', error: r.error });
+      const outs = [out];
+      // Same project in the other chosen formats: reframed copy (faces followed), same range/settings.
+      for (const [i, asp] of extra.filter((x) => x !== project.aspect).entries()) {
+        setStateL((s) => ({ ...s, phase: 'running', progress: 0, eta: null, label: `Formato ${asp} (${i + 2}/${extra.length + 1})` }));
+        const vp = await reframedCopy(renderProject, asp);
+        const k2 = +res / Math.min(vp.width, vp.height), W2 = even(vp.width * k2), H2 = even(vp.height * k2);
+        const o2 = out.replace(/(\.[^.\\/]+)$/, `-${asp.replace(':', 'x')}$1`);
+        const v = { proj: vp, W: W2, H: H2, sig: sigOf(vp, W2, H2, outFps, quality, a, b) };
+        if (!(await encodeFrames({ ...job, out: o2, width: W2, height: H2 }, frames, null, performance.now(), v))) return;
+        setStateL((s) => ({ ...s, phase: 'mux', progress: 0 }));
+        const r2 = await window.api.exportFinish();
+        if (!r2.ok) return setStateL({ phase: 'error', error: r2.error });
+        outs.push(o2);
+      }
+      setStateL({ phase: 'done', out, outs, secs: (performance.now() - t0) / 1000 });
+    } catch (e) {
+      setStateL({ phase: 'error', error: e.message });
     } finally {
       offAudio(); setState({ exporting: false });
     }
   };
 
   // Renders and encodes frames [startF, frames). Returns false when cancelled or failed (state already set).
-  const encodeFrames = async (job, frames, resumeFrom, t0) => {
+  const encodeFrames = async (job, frames, resumeFrom, t0, { proj, W, H, sig }) => {
     const canvas = document.createElement('canvas'); canvas.width = W; canvas.height = H;
     const ctx = canvas.getContext('2d', { alpha: false });
     const pctx = previewRef.current && previewRef.current.getContext('2d');
@@ -166,8 +186,8 @@ export default function ExportDialog({ onClose }) {
         for (let f = last.f; f < frames; f++) {
           if (cancelRef.current) throw new Error('cancel');
           fail(f);
-          await pool.prepare(renderProject, tAt(f));
-          renderFrame(ctx, renderProject, tAt(f), pool.getDrawable, W, H);
+          await pool.prepare(proj, tAt(f));
+          renderFrame(ctx, proj, tAt(f), pool.getDrawable, W, H);
           if (encError) throw encError;
           const vf = new VideoFrame(canvas, { timestamp: Math.round((f * 1e6) / outFps), duration: Math.round(1e6 / outFps) });
           encoder.encode(vf, { keyFrame: f === last.f || f % (outFps * 2) === 0 });
@@ -210,8 +230,8 @@ export default function ExportDialog({ onClose }) {
     try {
       for (let f = 0; f < frames; f++) {
         if (cancelRef.current) throw new Error('cancel');
-        await pool.prepare(renderProject, tAt(f));
-        renderFrame(ctx, renderProject, tAt(f), pool.getDrawable, W, H);
+        await pool.prepare(proj, tAt(f));
+        renderFrame(ctx, proj, tAt(f), pool.getDrawable, W, H);
         // Raw RGBA readback: canvas.toBlob runs as an idle task and stalls ~1 s/frame under load.
         const px = ctx.getImageData(0, 0, W, H).data.buffer;
         if (pending && !(await pending)) throw new Error('ffmpeg');
@@ -248,6 +268,12 @@ export default function ExportDialog({ onClose }) {
             <Select label="Calidad" value={quality} options={{ low: 'Baja (archivo pequeño)', med: 'Recomendada', high: 'Alta' }} onChange={setQuality} />
             {format === 'mp4' && <Toggle label={`Aceleración por GPU ${hwName ? `(${hwName.replace('h264_', '').toUpperCase()})` : hwName === '' ? '(no disponible)' : ''}`} value={hw && !!hwName} onChange={setHw} />}
             {hasCaptions && <Select label="Subtítulos" value={subs} options={SUBS} onChange={setSubs} />}
+            <div className="field multi-fmt"><span>Exportar también en</span>
+              <div className="row2">{MULTI.filter((x) => x !== project.aspect).map((x) => (
+                <button key={x} className={`btn sm ${extra.includes(x) ? 'primary' : ''}`} onClick={() => setExtra(extra.includes(x) ? extra.filter((y) => y !== x) : [...extra, x])}>{x}</button>
+              ))}</div>
+            </div>
+            {extra.length > 0 && <p className="hint">Cada formato extra se reencuadra siguiendo la cara y se guarda junto al principal (nombre-9x16…).</p>}
           </>}
           <Select label="Rango" value={range} options={{ all: 'Todo el video', ...(selClips.length ? { sel: 'Clips seleccionados' } : {}), custom: 'Personalizado' }} onChange={setRange} />
           {range === 'custom' && (
@@ -272,7 +298,7 @@ export default function ExportDialog({ onClose }) {
         <div className="export running">
           {!audioOnly && <canvas ref={previewRef} width={320} height={Math.round((320 * H) / W)} className="exp-preview" />}
           <div className="progress"><i style={{ width: `${(state.progress || 0) * 100}%` }} /></div>
-          <p>{state.phase === 'mux' ? 'Uniendo audio y video… ' : ''}{Math.round((state.progress || 0) * 100)}% {state.phase === 'running' && state.eta != null && `· quedan ~${fmtTime(state.eta).slice(0, 5)}`}
+          <p>{state.label ? `${state.label} · ` : ''}{state.phase === 'mux' ? 'Uniendo audio y video… ' : ''}{Math.round((state.progress || 0) * 100)}% {state.phase === 'running' && state.eta != null && `· quedan ~${fmtTime(state.eta).slice(0, 5)}`}
             {state.retry ? ` · reintento ${state.retry}/${RETRIES}` : ''}</p>
           {state.phase === 'running' && <div className="modal-actions"><button className="btn danger" onClick={() => { cancelRef.current = true; if (audioOnly) window.api.exportCancel(state.out); }}>Cancelar</button></div>}
         </div>
@@ -281,7 +307,7 @@ export default function ExportDialog({ onClose }) {
         <div className="export done">
           <div className="ok-ico"><Icon name="check" size={34} /></div>
           <h4>¡Exportación completa!</h4>
-          <p className="hint">{state.out}<br />Tiempo: {fmtTime(state.secs)}</p>
+          <p className="hint">{(state.outs || [state.out]).map((o) => <React.Fragment key={o}>{o}<br /></React.Fragment>)}Tiempo: {fmtTime(state.secs)}</p>
           <div className="modal-actions">
             <button className="btn" onClick={() => window.api.showItem(state.out)}><Icon name="folder" size={15} /> Abrir carpeta</button>
             <button className="btn" onClick={() => window.api.openPath(state.out)}><Icon name="play" size={15} /> Reproducir</button>

@@ -65,7 +65,8 @@ Regla del usuario: E2E solo para lo grande/complejo (marcado 🧪), no por cada 
 - [x] ✅ Medias (v1.18.0): #9 mantener presionado clip = bucle de su transición, #8 transiciones de cámara (whip pan, zoom giro, glitch RGB, luz, corazón/estrella) en `drawTransition`, #6 motion blur (acumulación de subcuadros en transiciones/keyframes rápidos), #13 burbuja de comentario/tarjeta tweet (`badge` en `stickers.js`).
 - [x] ✅ Extra (v1.19.0): catálogo amplio de stickers vectoriales no emoji.
 - [x] ✅ #2 zoom automático al hablar (v1.20.0): `zoomSteps`/`autoZoom` en `transcript.js` (frases alternan zoom leve, palabras clave zoom completo → keyframes de escala en clips de la pista principal), botón en panel Transcripción. E2E `e2e/verify12.cjs`.
-- [ ] ⏳ PENDIENTE Caras 🧪: #4 exportar varios formatos a la vez (reencuadre de `vision.js` por formato), #3 plantillas con huecos + beat-sync (`templates.js` + detección de ritmo), #17 multicámara (sync por audio con correlación cruzada + cortar entre tomas).
+- [x] ✅ #4 exportar varios formatos a la vez (v1.21.0): en Exportar, "Exportar también en" 16:9/9:16/1:1; cada extra es una copia reencuadrada siguiendo la cara (`reframedCopy` en `vision.js`) guardada como nombre-9x16.mp4; el proyecto no se toca. E2E `e2e/verify13.cjs`.
+- [ ] ⏳ PENDIENTE Caras 🧪: #3 plantillas con huecos + beat-sync (`templates.js` + detección de ritmo), #17 multicámara (sync por audio con correlación cruzada + cortar entre tomas).
 
 ## Plan por sesiones ⏳
 Cada sesión agrupa features que comparten código, para hacerlas juntas con un solo prompt y luego limpiar el contexto (`/clear`).
