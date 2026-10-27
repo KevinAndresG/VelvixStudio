@@ -4,16 +4,22 @@ import { activeVisual } from './render.js';
 import { FrameReader } from './decoder.js';
 import { animDrawable, preloadAnim } from './animated.js';
 
+// Set when something the preview draws finished loading/seeking: a paused preview only re-renders then.
+export const frame = { dirty: true };
+const markDirty = () => { frame.dirty = true; };
+
 const images = new Map(); // path → HTMLImageElement (shared, images are stateless)
 export function imageFor(path) {
   let img = images.get(path);
-  if (!img) { img = new Image(); img.decoding = 'async'; img.crossOrigin = 'anonymous'; img.src = mediaUrl(path); images.set(path, img); } // crossOrigin: a tainted canvas can't make VideoFrames
+  if (!img) { img = new Image(); img.decoding = 'async'; img.crossOrigin = 'anonymous'; img.onload = markDirty; img.src = mediaUrl(path); images.set(path, img); } // crossOrigin: a tainted canvas can't make VideoFrames
   return img;
 }
 
 // Path the visual element should play (stabilized/upscaled copy, reversed proxy, compatibility proxy or original)
 // and the second of that file shown at timeline time t (the processed copy starts at its own t0).
 export const videoPath = (clip, media) => vidSrc(clip, media).path;
+// Preview plays the light copy of a big video when there is one (same timing, smaller frame; layout is by aspect).
+const previewPath = (clip, media) => { const p = videoPath(clip, media); return media.preview && p === (media.proxy || media.path) ? media.preview : p; };
 export function videoTime(clip, media, t) { const v = vidSrc(clip, media); return clamp(sourceTime(clip, t, media) - v.off, 0, Math.max(0, v.dur - 0.001)); }
 // Path audio should come from (effects-rendered WAV wins).
 export const audioPath = (clip, media) => (clip.fxPath) || (clip.reverse && media.reversed) || media.proxy || media.path;
@@ -98,6 +104,7 @@ export class SourcePool {
         src.connect(gain).connect(ctx.destination); e.gain = gain;
       } else el.muted = true;
       el.addEventListener('error', () => this.onError && this.onError(clip, el.error));
+      for (const ev of ['seeked', 'loadeddata', 'canplay']) el.addEventListener(ev, markDirty);
       map.set(clip.id, e);
     }
     e.used = performance.now();
@@ -134,8 +141,18 @@ export class SourcePool {
     return { el, w: el.videoWidth, h: el.videoHeight };
   };
 
-  // Preview: drive elements from the timeline clock.
-  sync(project, t, playing) {
+  // True when every element audible/visible now can play on: the clock waits (buffering) instead of running
+  // ahead of a seeking/stalled element, which would re-seek it forever (frozen video, audio going on alone).
+  ready() {
+    for (const m of [this.videos, this.audios]) for (const e of m.values()) {
+      const el = e.el;
+      if (e.active && !e.fast && !el.error && (el.seeking || el.readyState < 3)) return false;
+    }
+    return true;
+  }
+
+  // Preview: drive elements from the timeline clock. hold: buffering, keep everything paused where it is.
+  sync(project, t, playing, hold = false) {
     const needVideo = new Set(), needAudio = new Set();
     const lookahead = playing ? 1.5 : 0;
     const visual = activeVisual(project, t);
@@ -147,14 +164,16 @@ export class SourcePool {
       const media = mediaOf(project, c);
       if (!media || media.missing) continue;
       needVideo.add(c.id);
-      const e = this._el(this.videos, c, videoPath(c, media), 'video');
+      const e = this._el(this.videos, c, previewPath(c, media), 'video');
       const want = Math.min(videoTime(c, media, Math.max(t, c.start - (it.tin || 0))), vidSrc(c, media).dur - 0.01);
       const ownsAudio = !c.detached && !c.fxPath && !vidSrc(c, media).alt; // a processed copy has no audio: an <audio> plays it
       const tk = trackOf(project, c);
       const active = !it.upcoming && t >= c.start && t < clipEnd(c);
       const vol = ownsAudio && active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) * duckGain(project, c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
-      this._drive(e.el, want, speedAt(c, t), playing && !it.upcoming);
+      const speed = speedAt(c, t);
+      e.active = active; e.fast = speed > 16;
+      this._drive(e.el, want, speed, playing && !it.upcoming, hold);
     }
     for (const c of project.clips) {
       if (c.type !== 'audio' && c.type !== 'video') continue;
@@ -169,15 +188,23 @@ export class SourcePool {
       const vol = active && !c.muted && !(tk && tk.muted) ? volumeAt(c, t) * fadeGain(c, t) * duckGain(project, c, t) : 0;
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
       const want = clamp(sourceTime(c, Math.max(t, c.start), media), 0, media.duration);
-      this._drive(e.el, want, speedAt(c, t), playing && active);
+      const speed = speedAt(c, t);
+      e.active = active; e.fast = speed > 16;
+      this._drive(e.el, want, speed, playing && active, hold);
     }
     for (const id of [...this.videos.keys()]) if (!needVideo.has(id)) this._park(this.videos, id);
     for (const id of [...this.audios.keys()]) if (!needAudio.has(id)) this._park(this.audios, id);
   }
-  _drive(el, want, speed, playing) {
+  _drive(el, want, speed, playing, hold) {
     // Above 16× the element can't play that fast: pause and seek every frame instead.
-    if (playing && speed <= 16) {
-      if (el.paused) { el.playbackRate = Math.max(0.0625, speed); el.currentTime = want; el.play().catch(() => {}); return; }
+    if (playing && speed <= 16 && !hold) {
+      if (el.paused) {
+        el.playbackRate = Math.max(0.0625, speed);
+        // Only seek when off: a seek to where it already is still flushes the decoder and stalls the start.
+        if (Math.abs(el.currentTime - want) > 0.05) el.currentTime = want;
+        el.play().catch(() => {});
+        return;
+      }
       // Drift in timeline seconds (a source-seconds tolerance would allow seconds of lag at 0.1×).
       const lag = (want - el.currentTime) / speed;
       if (Math.abs(lag) > 0.5) { if (!el.seeking && performance.now() - (el._seekAt || 0) > 400) { el.currentTime = want; el._seekAt = performance.now(); } return; }
@@ -187,7 +214,8 @@ export class SourcePool {
     } else {
       if (!el.paused) el.pause();
       // While playing above 16×, seek at most every 50 ms: a new seek every animation frame never lets one paint.
-      if (Math.abs(el.currentTime - want) > 0.02 && !el.seeking && !(playing && performance.now() - (el._seekAt || 0) < 50)) {
+      // Buffering: elements that had started stop a few ms ahead, don't seek them back (that would stall them too).
+      if (Math.abs(el.currentTime - want) > (hold ? 0.3 : 0.02) && !el.seeking && !(playing && performance.now() - (el._seekAt || 0) < 50)) {
         el.currentTime = want; el._seekAt = performance.now();
       }
     }
@@ -196,6 +224,7 @@ export class SourcePool {
   _park(map, id) {
     const e = map.get(id);
     if (!e) return; // already dropped as the oldest by an earlier _park in the same sync
+    e.active = false;
     if (!e.el.paused) e.el.pause();
     if (e.gain) e.gain.gain.value = 0;
     if (map.size > 10) {

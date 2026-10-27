@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
 import { projectDuration, fmtTime, mediaOf, clipEnd, setProp, transformAt } from '../engine/model.js';
 import { renderFrame, activeVisual, textBounds, visualBounds } from '../engine/render.js';
-import { SourcePool } from '../engine/sources.js';
+import { SourcePool, frame } from '../engine/sources.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import { importPaths, addToTimeline } from './actions.js';
 
@@ -19,10 +19,17 @@ export async function snapshotCanvas(height, type = 'image/jpeg') {
   return new Promise((r) => c.toBlob(r, type, 0.9));
 }
 
+function Timecode({ fps, duration }) {
+  const time = useStore((s) => s.time);
+  return <span className="tc"><b>{fmtTime(time, fps)}</b> / {fmtTime(duration, fps)}</span>;
+}
+
 export default function Preview() {
   const project = useStore((s) => s.project);
   const playing = useStore((s) => s.playing);
-  const time = useStore((s) => s.time);
+  // Not every frame of playback: the whole stage re-rendering 60 times a second was most of the play cost.
+  const pausedTime = useStore((s) => (s.playing ? null : s.time));
+  const time = pausedTime ?? getState().time;
   const selection = useStore((s) => s.selection);
   const mainRef = useRef(null), wrapRef = useRef(null), canvasRef = useRef(null), stageRef = useRef(null), boxPending = useRef(false);
   const [box, setBox] = useState({ w: 640, h: 360 });
@@ -48,27 +55,41 @@ export default function Preview() {
   useEffect(() => {
     const pool = (previewPool = new SourcePool('preview'));
     pool.onError = (clip) => toast(`No se puede reproducir "${clip.name}". Usa Importar de nuevo para crear una versión compatible.`, 'error');
-    let raf, clock = null, lastSel = '';
+    if (window.__velvix) window.__velvix.pool = pool; // E2E hook
+    let raf, clock = null, last = {};
     const tick = () => {
       raf = requestAnimationFrame(tick);
       const s = getState(), p = s.project;
       if (!p || s.exporting) return;
       const canvas = (previewCanvas = canvasRef.current); if (!canvas) return;
+      const now = performance.now();
       let t = s.time;
       if (s.playing) {
-        const now = performance.now();
-        if (!clock) clock = { wall: now, t: s.time };
-        t = clock.t + (now - clock.wall) / 1000;
-        const end = projectDuration(p);
-        if (t >= end) { t = end; clock = null; setState({ time: end, playing: false }); }
-        else setState({ time: t });
-      } else clock = null;
-      pool.sync(p, t, s.playing);
+        if (!clock) clock = { wall: now, t: s.time, held: 0 };
+        // Buffering: hold the clock (up to 2.5 s, then play on regardless) until the media now on screen can play.
+        if (!pool.ready() && (clock.held || (clock.held = now)) && now - clock.held < 2500) {
+          clock.wall = now; clock.t = s.time;
+          pool.sync(p, t, true, true);
+        } else {
+          if (pool.ready()) clock.held = 0;
+          t = clock.t + (now - clock.wall) / 1000;
+          const end = projectDuration(p);
+          if (t >= end) { t = end; clock = null; setState({ time: end, playing: false }); }
+          else setState({ time: t });
+          pool.sync(p, t, true);
+        }
+      } else {
+        clock = null;
+        // Paused: render only when something changed (idle used to cost a full composite 60 times a second).
+        // ponytail: 4 Hz fallback catches async loads without their own event (LUTs, mattes, animated stickers).
+        if (!frame.dirty && p === last.p && t === last.t && canvas.width === last.w && canvas.height === last.h && now - last.at < 250) return;
+        pool.sync(p, t, false);
+      }
+      frame.dirty = false;
+      last = { p, t, w: canvas.width, h: canvas.height, at: now };
       renderFrame(canvas.getContext('2d'), p, t, pool.getDrawable, canvas.width, canvas.height);
-      // Refresh selection overlay when a clip under it moves (keyframes/animations).
-      const key = s.selection.join() + Math.round(t * 30);
-      // Also until the box can be measured (a paused video whose frame was not decoded yet when it was selected).
-      if ((key !== lastSel && s.selection.length) || boxPending.current) { lastSel = key; force((n) => n + 1); }
+      // Until the selection box can be measured (a paused video whose frame was not decoded yet when it was selected).
+      if (!s.playing && boxPending.current) force((n) => n + 1);
     };
     raf = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(raf); pool.destroy(); previewPool = null; };
@@ -90,8 +111,8 @@ export default function Preview() {
     return b && { cx: b.cx * k, cy: b.cy * k, w: b.w * k, h: b.h * k, rotation: b.rotation };
   };
   const selClip = project.clips.find((c) => c.id === selection[0] && (c.type === 'video' || c.type === 'image' || c.type === 'text'));
-  const bounds = selClip ? boundsOf(selClip) : null;
-  boxPending.current = !!selClip && !bounds && time >= selClip.start && time < clipEnd(selClip);
+  const bounds = selClip && pausedTime !== null ? boundsOf(selClip) : null; // hidden while playing
+  boxPending.current = !!selClip && pausedTime !== null && !bounds && time >= selClip.start && time < clipEnd(selClip);
 
   // Topmost visible element under the pointer (as drawn: top track first), skipping locked tracks.
   const hitAt = (e) => {
@@ -156,7 +177,7 @@ export default function Preview() {
     const out = await window.api.saveDialog({ defaultPath: `${project.name} ${fmtTime(time).replace(/[:.]/g, '-')}.png`, filters: [{ name: 'PNG', extensions: ['png'] }] });
     if (out && blob) { await window.api.writeFile(out, await blob.arrayBuffer()); toast('Fotograma guardado'); }
   };
-  const step = (d) => setState({ time: Math.max(0, Math.min(duration, time + d)), playing: false });
+  const step = (d) => setState({ time: Math.max(0, Math.min(duration, getState().time + d)), playing: false });
 
   return (
     <main className="preview" ref={mainRef}>
@@ -186,7 +207,7 @@ export default function Preview() {
         </div>
       </div>
       <div className="player-bar">
-        <span className="tc"><b>{fmtTime(time, project.fps)}</b> / {fmtTime(duration, project.fps)}</span>
+        <Timecode fps={project.fps} duration={duration} />
         <div className="pb-center">
           <IconBtn icon="stepBack" title="Fotograma anterior (←)" onClick={() => step(-1 / project.fps)} size={16} />
           <button className="play-btn" onClick={() => setState({ playing: !playing })} title="Reproducir (Espacio)" aria-label="Reproducir">

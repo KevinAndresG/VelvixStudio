@@ -101,7 +101,7 @@ function MediaCard({ m, shown }) {
   const relink = async () => {
     const paths = await window.api.openMedia();
     if (!paths[0]) return;
-    update((p) => { const x = p.media.find((k) => k.id === m.id); x.path = paths[0]; x.missing = false; x.proxy = null; x.reversed = null; delete x.sar; });
+    update((p) => { const x = p.media.find((k) => k.id === m.id); x.path = paths[0]; x.missing = false; x.proxy = null; x.reversed = null; x.preview = null; delete x.sar; });
     reprobeMedia();
     toast('Archivo vuelto a vincular');
   };

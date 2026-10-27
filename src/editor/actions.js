@@ -94,6 +94,7 @@ async function prepareMedia(media, jobId = uid(), reverse = false) {
       const strip = type === 'video' ? await api.strip(src, duration, 16) : thumb;
       patch({ thumb, strip });
     }
+    await makePreview({ ...media, proxy: src === path ? null : src }, jobId);
   } catch (e) { toast(`Error procesando ${media.name}: ${e.message}`, 'error'); }
   setJob(jobId, null);
 }
@@ -115,6 +116,20 @@ async function animThumb(media) {
   return out;
 }
 
+// Light preview-only copy of big videos (4K plays and seeks smoothly from it; export reads the original).
+const bigVideo = (m) => m.type === 'video' && !m.preview && !m.missing && Math.max(m.width || 0, m.height || 0) > 1920;
+const making = new Set(); // media ids being transcoded (import and project-open checks can ask twice)
+async function makePreview(media, jobId = uid()) {
+  if (!bigVideo(media) || making.has(media.id)) return;
+  making.add(media.id);
+  setJob(jobId, { label: `Optimizando para edición ${media.name}`, progress: 0 });
+  const off = api.onJobProgress((d) => d.jobId === jobId && setJob(jobId, { progress: d.progress }));
+  try {
+    const preview = await api.transcode(media.proxy || media.path, 'preview', media.duration, jobId);
+    patchSilently((p) => { const m = p.media.find((x) => x.id === media.id); if (m) m.preview = preview; });
+  } finally { off(); setJob(jobId, null); making.delete(media.id); }
+}
+
 // Videos without `sar` (projects saved before 1.6.1, relinked files): probe again. Anamorphic ones had their coded
 // size and no square-pixel proxy: redo size, proxy, thumbnails and reversed copy.
 export async function reprobeMedia() {
@@ -125,6 +140,8 @@ export async function reprobeMedia() {
     patchSilently((p) => { const x = p.media.find((k) => k.id === m.id); if (x) Object.assign(x, fixed); });
     if (!fixed.proxy && (fixed.sar !== 1 || !PLAYABLE.includes(fixed.vcodec))) prepareMedia(fixed, uid(), !!m.reversed);
   }
+  // Projects from before 1.13: big videos get their preview copy, one at a time.
+  for (const m of proj().media.filter(bigVideo)) await makePreview(m).catch(() => {});
 }
 
 // Removes media from the project together with the clips that use it (one undo step). Files on disk are kept.

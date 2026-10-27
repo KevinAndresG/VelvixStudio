@@ -381,12 +381,16 @@ ipcMain.handle('media:peaks', async (_e, file) => {
   return peaks;
 });
 
-// Proxy for codecs Chromium can't decode, and reversed copies.
+// Proxy for codecs Chromium can't decode, reversed copies, and light preview-only copies of big videos
+// (max 1280 px, short GOP: 4K/long-GOP seeks stall playback; export still reads the original).
 ipcMain.handle('media:transcode', async (_e, file, kind, duration, jobId) => {
   const out = path.join(CACHE, `${kind === 'proxy' ? 'proxy2' : kind}-${hash(file)}.mp4`); // proxy2: square pixels
   if (await exists(out)) return out;
-  const vf = kind === 'reverse' ? ['-vf', 'reverse', '-af', 'areverse'] : ['-vf', 'scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1'];
-  await run(FFMPEG, ['-y', '-i', file, ...vf, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', out + '.part.mp4'], {
+  const vf = kind === 'reverse' ? ['-vf', 'reverse', '-af', 'areverse']
+    : kind === 'preview' ? ['-vf', 'scale=w=1280:h=1280:force_original_aspect_ratio=decrease:force_divisible_by=2']
+    : ['-vf', 'scale=trunc(iw*sar/2)*2:trunc(ih/2)*2,setsar=1'];
+  const q = kind === 'preview' ? ['-preset', 'ultrafast', '-crf', '23'] : ['-preset', 'veryfast', '-crf', '18'];
+  await run(FFMPEG, ['-y', '-i', file, ...vf, '-c:v', 'libx264', ...q, '-g', '15', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k', out + '.part.mp4'], {
     onStderr: (l) => { const t = timeOf(l); if (t != null) send('job:progress', { jobId, progress: Math.min(1, t / duration) }); },
   });
   await fsp.rename(out + '.part.mp4', out);
