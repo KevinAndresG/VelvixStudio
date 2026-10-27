@@ -778,6 +778,9 @@ function TransSection({ clip, edit, field, title, hint }) {
       <TransGrid value={tr && tr.type} exit={exit} onPick={(v) => edit((c) => { c[field] = { duration: Math.min(0.6, max), ...c[field], type: v }; })} />
       {tr && <>
         <Slider label="Duración" value={Math.min(tr.duration, max)} min={0.1} max={max} step={0.05} unit="s" onChange={(v) => edit((c) => { c[field].duration = v; }, 'td' + field)} />
+        <div className="chips wrap">
+          {[[undefined, 'Lineal'], ['inOut', 'Suave'], ['in', 'Acelerar'], ['out', 'Frenar'], ['back', 'Rebote']].map(([k, n]) => <button key={n} className={tr.ease === k ? 'active' : ''} onClick={() => edit((c) => { if (k) c[field].ease = k; else delete c[field].ease; })}>{n}</button>)}
+        </div>
         <button className="btn sm" onClick={all}>{exit ? 'Aplicar a todos los clips de la pista' : 'Aplicar a todos los cortes de la pista'}</button>
       </>}
       <p className="hint">{hint}</p>

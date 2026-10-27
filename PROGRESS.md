@@ -53,6 +53,14 @@ Editor de video de escritorio (Electron + React + FFmpeg + WebCodecs + Whisper).
 **Emojis aparte y transiciones de entrada/salida (v1.15.0):** pestaña Emojis (`editor/emojis.js`, 883 en 14 categorías, recientes) separada de Stickers; el sticker-emoji tiene pestaña propia en el inspector (sin controles de texto). Transición de entrada (`clip.transition`) ahora ocupa los primeros `duration` s del clip y arranca en el corte (el clip anterior se mantiene en su último fotograma, `activeVisual` devuelve `held`); nueva salida `clip.transitionOut` (direccionales espejadas con `EXIT_AS`). `drawTransition` mezcla en una capa (sin rastro del clip anterior con clips que no llenan el cuadro) y `reveal` recorta A fuera de la forma. Panel de transiciones con miniaturas animadas (mismo renderer) en el inspector y en la pestaña izquierda. Pruebas: `e2e/verify11.cjs`.
 **Instalador:** NSIS x64, elegir carpeta, accesos directos; escaneado con Windows Defender sin amenazas.
 
+**Ideas rápidas (v1.16.0):** recorte de silencios con pausa mínima 0.2–3 s y margen antes/después (`pad`) configurable; buscador de emojis por palabra (`searchEmojis`) y animación al agregar (rebotar/latir/girar/pulso, loop `hop` nuevo); curva de aceleración por transición (`transition.ease`: lineal/suave/acelerar/frenar/rebote).
+
+## Cola de ideas (nuevas, oct 2026) ⏳ — ordenadas por costo
+Regla del usuario: E2E solo para lo grande/complejo (marcado 🧪), no por cada detalle. Hechas: #1, #7, #10, #14.
+- [ ] Baratas: #15 favoritos (transiciones/efectos/estilos de texto, localStorage), #16 copiar/pegar atributos de clip, #11 SFX automáticos (whoosh en transiciones, pop en stickers; biblioteca ya tiene sintetizados), #12 reacciones flotantes (efecto/sticker animado en `stickers.js`), #5 barra de progreso y cuenta regresiva (stickers animados).
+- [ ] Medias: #9 mantener presionado clip = bucle de su transición, #8 transiciones de cámara (whip pan, zoom giro, glitch RGB, luz, corazón/estrella) en `drawTransition`, #6 motion blur (acumulación de subcuadros en transiciones/keyframes rápidos), #13 burbuja de comentario/tarjeta tweet (`badge` en `stickers.js`).
+- [ ] Caras 🧪: #2 zoom automático al hablar (transcripción + keyframes de escala), #4 exportar varios formatos a la vez (reencuadre de `vision.js` por formato), #3 plantillas con huecos + beat-sync (`templates.js` + detección de ritmo), #17 multicámara (sync por audio con correlación cruzada + cortar entre tomas).
+
 ## Plan por sesiones ⏳
 Cada sesión agrupa features que comparten código, para hacerlas juntas con un solo prompt y luego limpiar el contexto (`/clear`).
 Prioridad: **A** = muy pedido, **B** = útil, **C** = opcional. Los números (#) se mantienen para referencia.

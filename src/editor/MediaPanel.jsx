@@ -11,7 +11,7 @@ import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 import BrandTab from './BrandTab.jsx';
 import VisionTab from './VisionTab.jsx';
-import { EMOJI_CATS, recentEmojis, pushRecentEmoji } from './emojis.js';
+import { EMOJI_CATS, recentEmojis, pushRecentEmoji, searchEmojis } from './emojis.js';
 import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize } from './library.js';
 
 const TABS = [
@@ -348,10 +348,19 @@ function StickersTab() {
 function EmojisTab() {
   const [cat, setCat] = useState('');
   const [recent, setRecent] = useState(recentEmojis);
-  const add = (e) => { addSticker(e); pushRecentEmoji(e); setRecent(recentEmojis()); };
+  const [q, setQ] = useState('');
+  const [loop, setLoop] = useState('none');
+  const add = (e) => { addSticker(e, loop); pushRecentEmoji(e); setRecent(recentEmojis()); };
+  const found = q.trim() ? searchEmojis(q) : null;
   const cats = cat ? EMOJI_CATS.filter(([k]) => k === cat) : EMOJI_CATS;
   return (
     <div className="panel">
+      <input className="input" placeholder="Buscar: dinero, fuego, amor…" value={q} onChange={(e) => setQ(e.target.value)} />
+      <div className="chips wrap">
+        {[['none', 'Sin animar'], ['hop', 'Rebotar'], ['heartbeat', 'Latir'], ['spin', 'Girar'], ['pulse', 'Pulso']].map(([k, n]) => <button key={k} className={loop === k ? 'active' : ''} onClick={() => setLoop(k)}>{n}</button>)}
+      </div>
+      {found && (found.length ? <div className="sticker-grid">{found.map((s) => <button key={s} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div> : <p className="hint">Sin resultados</p>)}
+      {!found && <>
       <div className="chips wrap">
         <button className={!cat ? 'active' : ''} onClick={() => setCat('')}>Todos</button>
         {EMOJI_CATS.map(([k, name]) => <button key={k} className={cat === k ? 'active' : ''} onClick={() => setCat(k)}>{name}</button>)}
@@ -363,6 +372,7 @@ function EmojisTab() {
           <div className="sticker-grid">{list.map((s, i) => <button key={s + i} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div>
         </React.Fragment>
       ))}
+      </>}
       <p className="hint">Se agregan en el cursor como sticker grande; cámbiale tamaño, animación o posición en el inspector.</p>
     </div>
   );

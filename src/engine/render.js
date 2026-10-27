@@ -1,5 +1,5 @@
 // Frame compositor shared by preview and export, so the exported video matches the preview exactly.
-import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword, sourceTime, vidSrc, matteOn } from './model.js';
+import { clamp, lerp, clipEnd, transformAt, groupAt, effectiveFilter, mediaOf, isKeyword, sourceTime, vidSrc, matteOn, easeFn } from './model.js';
 import { grade, needsGrade, matteFrame } from './gl.js';
 import { drawBadge, badgeSize } from './stickers.js';
 
@@ -64,6 +64,7 @@ export function animState(anim, local, dur) {
       case 'pulse': s.scale *= 1 + 0.06 * Math.sin(t * Math.PI * 2); break;
       case 'shake': s.dx += (rand(Math.floor(t * 20)) - 0.5) * 0.02; s.dy += (rand(Math.floor(t * 20) + 7) - 0.5) * 0.02; break;
       case 'float': s.dy += Math.sin(t * Math.PI) * 0.02; break;
+      case 'hop': s.dy -= Math.abs(Math.sin(t * Math.PI * 1.5)) * 0.04; break;
       case 'swing': s.rot += Math.sin(t * Math.PI * 1.5) * 8; break;
       case 'spin': s.rot += t * 120; break;
       case 'flicker': s.opacity *= rand(Math.floor(t * 12)) > 0.15 ? 1 : 0.3; break;
@@ -489,6 +490,8 @@ export const EXIT_AS = { slideLeft: 'slideRight', slideRight: 'slideLeft', slide
 
 // A, B: full-frame layer canvases, either may be null (to/from what's underneath). p: 0 = all A, 1 = all B.
 // A is only drawn where B's frame doesn't cover it yet, so a B that doesn't fill the frame never ends on a stale A.
+// Transition progress curve (`ease` absent = linear, as before).
+const tEase = (tr, p) => (tr.ease ? easeFn(tr.ease)(clamp(p, 0, 1)) : p);
 export function drawTransition(ctx, type, p, A, B, W, H) {
   const draw = (c, alpha = 1, fn) => { if (!c) return; ctx.save(); ctx.globalAlpha = alpha; fn && fn(); ctx.drawImage(c, 0, 0); ctx.restore(); };
   const q = easeInOut(p);
@@ -777,10 +780,10 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       if (tin && t < c.start + tin) {
         const A = it.prev;
         const la = A ? layer(A, Math.min(t, clipEnd(A) - 1e-3), 'tA') : null;
-        drawTransition(cx, c.transition.type, (t - c.start) / tin, la, layer(c, t, 'tB'), W, H);
+        drawTransition(cx, c.transition.type, tEase(c.transition, (t - c.start) / tin), la, layer(c, t, 'tB'), W, H);
       } else {
         const type = c.transitionOut.type;
-        drawTransition(cx, EXIT_AS[type] || type, (clipEnd(c) - t) / tout, null, layer(c, t, 'tB'), W, H);
+        drawTransition(cx, EXIT_AS[type] || type, tEase(c.transitionOut, (clipEnd(c) - t) / tout), null, layer(c, t, 'tB'), W, H);
       }
       continue;
     }

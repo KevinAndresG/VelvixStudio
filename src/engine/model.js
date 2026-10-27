@@ -279,7 +279,7 @@ export const ANIM_IN = {
   typewriter: 'Máquina de escribir (texto)', letters: 'Letra a letra (texto)', wordsUp: 'Palabras ↑ (texto)',
 };
 export const ANIM_OUT = { ...ANIM_IN };
-export const ANIM_LOOP = { none: 'Ninguna', pulse: 'Pulso', shake: 'Temblor', float: 'Flotar', swing: 'Balanceo', spin: 'Rotación', wave: 'Ola (texto)', flicker: 'Parpadeo', heartbeat: 'Latido' };
+export const ANIM_LOOP = { none: 'Ninguna', pulse: 'Pulso', shake: 'Temblor', float: 'Flotar', hop: 'Rebotar', swing: 'Balanceo', spin: 'Rotación', wave: 'Ola (texto)', flicker: 'Parpadeo', heartbeat: 'Latido' };
 
 export const TRANSITIONS = {
   fade: 'Disolver', fadeBlack: 'Fundido negro', fadeWhite: 'Fundido blanco', flash: 'Destello',

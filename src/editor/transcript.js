@@ -103,7 +103,8 @@ export function silenceRanges(samples, { db = -40, min = 0.6, pad = 0.12, rate =
     if (silent && start < 0) start = w;
     if (!silent && start >= 0) {
       const a = (start * win) / rate, b = (w * win) / rate;
-      if (b - a >= min) out.push([a === 0 ? 0 : a + pad, w === n ? b : b - pad]);
+      const ca = a === 0 ? 0 : a + pad, cb = w === n ? b : b - pad; // pad = margin of silence kept around speech
+      if (b - a >= min && cb - ca > 0.02) out.push([ca, cb]);
       start = -1;
     }
   }

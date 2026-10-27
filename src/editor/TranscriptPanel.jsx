@@ -16,6 +16,7 @@ export default function TranscriptTab() {
   const [anchor, setAnchor] = useState(null);
   const [db, setDb] = useState(-40);
   const [minPause, setMinPause] = useState(0.6);
+  const [pad, setPad] = useState(0.12);
   const [cands, setCands] = useState(null); // [{ a, b, kind, on }]
 
   const run = async () => { localStorage.setItem('whisperModel', model); setBusy(true); await transcribe({ model, language: lang }); setBusy(false); setSel([]); setCands(null); };
@@ -35,7 +36,7 @@ export default function TranscriptTab() {
     try {
       const fill = wordRanges(words || [], fillerIndices(words || [])).map(([a, b]) => ({ a, b, kind: 'filler' }));
       const audio = await timelineAudio();
-      const sil = audio ? silenceRanges(audio, { db, min: minPause }).map(([a, b]) => ({ a, b, kind: 'pause' })) : [];
+      const sil = audio ? silenceRanges(audio, { db, min: minPause, pad }).map(([a, b]) => ({ a, b, kind: 'pause' })) : [];
       const all = [...fill, ...sil].sort((x, y) => x.a - y.a).map((c) => ({ ...c, on: true }));
       setCands(all);
       if (!all.length) toast('No se encontraron muletillas ni pausas');
@@ -75,7 +76,8 @@ export default function TranscriptTab() {
       )}
       <h5>Quitar muletillas y pausas</h5>
       <Slider label="Umbral de silencio" value={db} min={-60} max={-20} unit=" dB" onChange={setDb} reset={-40} />
-      <Slider label="Pausa mínima" value={minPause} min={0.3} max={2} step={0.1} unit=" s" onChange={setMinPause} reset={0.6} />
+      <Slider label="Pausa mínima" value={minPause} min={0.2} max={3} step={0.1} unit=" s" onChange={setMinPause} reset={0.6} />
+      <Slider label="Margen antes/después" value={pad} min={0} max={0.5} step={0.02} unit=" s" onChange={setPad} reset={0.12} />
       <button className="btn wide" disabled={busy} onClick={detect}><Icon name="search" size={15} /> Detectar</button>
       {cands && cands.length > 0 && (
         <>
