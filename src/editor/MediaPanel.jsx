@@ -318,7 +318,8 @@ function TextTab() {
 }
 
 // Live preview of an animated sticker (same drawing code as the video).
-function BadgeThumb({ kind, theme }) {
+// Still frame unless hovered (dozens of thumbs), animated while the pointer is over it.
+function BadgeThumb({ kind, theme, hover }) {
   const ref = useRef(null);
   useEffect(() => {
     let raf;
@@ -329,17 +330,26 @@ function BadgeThumb({ kind, theme }) {
       x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height);
       const { w, h } = badgeSize(x, tx, 40), k = Math.min(1, (c.width - 12) / w, (c.height - 8) / h);
       x.translate(c.width / 2, c.height / 2); x.scale(k, k);
-      drawBadge(x, tx, ((performance.now() - t0) / 1000) % 6, 40, 6);
-      raf = requestAnimationFrame(draw);
+      drawBadge(x, tx, hover ? ((performance.now() - t0) / 1000) % 6 : 1.4, 40, 6);
+      if (hover) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [kind, theme]);
+  }, [kind, theme, hover]);
   return <canvas ref={ref} width={260} height={90} />;
 }
 
 function StickersTab() {
   const [theme, setTheme] = useState('');
+  const [hover, setHover] = useState(null);
+  const grid = (list) => (
+    <div className="badge-grid">
+      {list.map(([k, v]) => (
+        <button key={k} data-badge={k} onClick={() => addBadge(k, theme)} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)} title={`Agregar «${v.name}»`}><BadgeThumb kind={k} theme={theme} hover={hover === k} /><small>{v.name}</small></button>
+      ))}
+    </div>
+  );
+  const all = Object.entries(BADGES);
   return (
     <div className="panel">
       <h5>Stickers animados para redes</h5>
@@ -347,11 +357,9 @@ function StickersTab() {
         <button className={!theme ? 'active' : ''} onClick={() => setTheme('')}>Auto</button>
         {Object.entries(BADGE_THEMES).map(([k, v]) => <button key={k} className={theme === k ? 'active' : ''} onClick={() => setTheme(k)}>{v.name}</button>)}
       </div>
-      <div className="badge-grid">
-        {Object.entries(BADGES).map(([k, v]) => (
-          <button key={k} data-badge={k} onClick={() => addBadge(k, theme)} title={`Agregar «${v.name}»`}><BadgeThumb kind={k} theme={theme} /><small>{v.name}</small></button>
-        ))}
-      </div>
+      {grid(all.filter(([, v]) => v.group !== 'shapes'))}
+      <h5>Flechas, formas y globos</h5>
+      {grid(all.filter(([, v]) => v.group === 'shapes'))}
       <button className="btn wide" onClick={autoSfx} title="Pop en cada sticker y whoosh en cada transición">🔊 Sonidos automáticos</button>
       <button className="btn wide import-sticker" onClick={importSticker}><Icon name="upload" size={15} /> Importar GIF, WebP o Lottie animado</button>
       <p className="hint">Los GIF/WebP/APNG con transparencia y las animaciones Lottie (.json) se repiten en bucle y conservan el fondo transparente.</p>
