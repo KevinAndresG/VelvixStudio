@@ -479,35 +479,56 @@ export function canvasToSrc(clip, t, sw, sh, W, H, X, Y) {
 }
 
 // ---------- transitions ----------
-function drawTransition(ctx, type, p, A, B, W, H) {
-  // A, B are full-frame layer canvases (or null).
+// A clip's entry transition (`transition`) plays over its first seconds, from the clip just before it on the track
+// (held on its last frame) or, with none, from what's underneath; its exit transition (`transitionOut`) plays over
+// its last seconds, to what's underneath. Never outside the clip, so nothing shows before the cut.
+export const transIn = (c) => (c.transition ? Math.min(c.transition.duration, c.duration) : 0);
+export const transOut = (c) => (c.transitionOut ? Math.min(c.transitionOut.duration, c.duration - transIn(c)) : 0);
+// An exit plays an entry backwards: mirror directional ones so «Deslizar ←» also leaves towards the left.
+export const EXIT_AS = { slideLeft: 'slideRight', slideRight: 'slideLeft', slideUp: 'slideDown', slideDown: 'slideUp', wipeLeft: 'wipeRight', wipeRight: 'wipeLeft', wipeUp: 'wipeDown', wipeDown: 'wipeUp', push: 'pushBack' };
+
+// A, B: full-frame layer canvases, either may be null (to/from what's underneath). p: 0 = all A, 1 = all B.
+// A is only drawn where B's frame doesn't cover it yet, so a B that doesn't fill the frame never ends on a stale A.
+export function drawTransition(ctx, type, p, A, B, W, H) {
   const draw = (c, alpha = 1, fn) => { if (!c) return; ctx.save(); ctx.globalAlpha = alpha; fn && fn(); ctx.drawImage(c, 0, 0); ctx.restore(); };
   const q = easeInOut(p);
+  // Crossfade on a layer: A·(1−k) + B·k added, exact where both are opaque and a clean fade where only one is.
+  const mix = (k, fa, fb) => {
+    const [mc, mx] = scratch(`tMix${W}x${H}`, W, H); // per size: catalog thumbnails don't resize the frame's layer
+    mx.clearRect(0, 0, W, H);
+    if (A) { mx.save(); mx.globalAlpha = 1 - k; fa && fa(mx); mx.drawImage(A, 0, 0); mx.restore(); }
+    if (B) { mx.save(); mx.globalCompositeOperation = 'lighter'; mx.globalAlpha = k; fb && fb(mx); mx.drawImage(B, 0, 0); mx.restore(); }
+    ctx.drawImage(mc, 0, 0);
+  };
+  const zoom = (s) => (x) => { x.translate(W / 2, H / 2); x.scale(s, s); x.translate(-W / 2, -H / 2); };
+  // B inside the shape, A outside it.
+  const reveal = (shape) => {
+    if (A) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); shape(); ctx.clip('evenodd'); ctx.drawImage(A, 0, 0); ctx.restore(); }
+    if (B) { ctx.save(); ctx.beginPath(); shape(); ctx.clip(); ctx.drawImage(B, 0, 0); ctx.restore(); }
+  };
   switch (type) {
     case 'fadeBlack': case 'fadeWhite': {
-      if (p < 0.5) draw(A); else draw(B);
+      draw(p < 0.5 ? A : B);
       ctx.save(); ctx.globalAlpha = 1 - Math.abs(p - 0.5) * 2; ctx.fillStyle = type === 'fadeBlack' ? '#000' : '#fff'; ctx.fillRect(0, 0, W, H); ctx.restore();
       break;
     }
-    case 'flash': draw(A); draw(B, q); ctx.save(); ctx.globalAlpha = Math.max(0, 1 - Math.abs(p - 0.5) * 3); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.restore(); break;
-    case 'slideLeft': draw(A); draw(B, 1, () => ctx.translate(W * (1 - q), 0)); break;
-    case 'slideRight': draw(A); draw(B, 1, () => ctx.translate(-W * (1 - q), 0)); break;
-    case 'slideUp': draw(A); draw(B, 1, () => ctx.translate(0, H * (1 - q))); break;
-    case 'slideDown': draw(A); draw(B, 1, () => ctx.translate(0, -H * (1 - q))); break;
-    case 'push': draw(A, 1, () => ctx.translate(-W * q, 0)); draw(B, 1, () => ctx.translate(W * (1 - q), 0)); break;
-    case 'wipeLeft': case 'wipeRight': case 'wipeDown': case 'circle': case 'diamond': {
-      draw(A);
-      ctx.save(); ctx.beginPath();
-      if (type === 'wipeLeft') ctx.rect(W * (1 - q), 0, W * q, H);
-      else if (type === 'wipeRight') ctx.rect(0, 0, W * q, H);
-      else if (type === 'wipeDown') ctx.rect(0, 0, W, H * q);
-      else if (type === 'circle') ctx.arc(W / 2, H / 2, (q * Math.hypot(W, H)) / 2, 0, Math.PI * 2);
-      else { const r = q * (W + H) * 0.55; ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath(); }
-      ctx.clip(); if (B) ctx.drawImage(B, 0, 0); ctx.restore();
+    case 'flash': mix(q); ctx.save(); ctx.globalAlpha = Math.max(0, 1 - Math.abs(p - 0.5) * 3); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H); ctx.restore(); break;
+    case 'slideLeft': case 'slideRight': case 'slideUp': case 'slideDown': {
+      const [dx, dy] = { slideLeft: [W, 0], slideRight: [-W, 0], slideUp: [0, H], slideDown: [0, -H] }[type], ox = dx * (1 - q), oy = dy * (1 - q);
+      if (A) { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.rect(ox, oy, W, H); ctx.clip('evenodd'); ctx.drawImage(A, 0, 0); ctx.restore(); }
+      draw(B, 1, () => ctx.translate(ox, oy));
       break;
     }
-    case 'zoomIn': draw(A, 1 - q, () => { ctx.translate(W / 2, H / 2); ctx.scale(1 + q, 1 + q); ctx.translate(-W / 2, -H / 2); }); draw(B, q); break;
-    case 'zoomOut': draw(A, 1 - q); draw(B, q, () => { const s = lerp(1.6, 1, q); ctx.translate(W / 2, H / 2); ctx.scale(s, s); ctx.translate(-W / 2, -H / 2); }); break;
+    case 'push': draw(A, 1, () => ctx.translate(-W * q, 0)); draw(B, 1, () => ctx.translate(W * (1 - q), 0)); break;
+    case 'pushBack': draw(A, 1, () => ctx.translate(W * q, 0)); draw(B, 1, () => ctx.translate(-W * (1 - q), 0)); break;
+    case 'wipeLeft': reveal(() => ctx.rect(W * (1 - q), 0, W * q, H)); break;
+    case 'wipeRight': reveal(() => ctx.rect(0, 0, W * q, H)); break;
+    case 'wipeDown': reveal(() => ctx.rect(0, 0, W, H * q)); break;
+    case 'wipeUp': reveal(() => ctx.rect(0, H * (1 - q), W, H * q)); break;
+    case 'circle': reveal(() => { const r = (q * Math.hypot(W, H)) / 2; ctx.moveTo(W / 2 + r, H / 2); ctx.arc(W / 2, H / 2, r, 0, Math.PI * 2); }); break;
+    case 'diamond': reveal(() => { const r = q * (W + H) * 0.55; ctx.moveTo(W / 2, H / 2 - r); ctx.lineTo(W / 2 + r, H / 2); ctx.lineTo(W / 2, H / 2 + r); ctx.lineTo(W / 2 - r, H / 2); ctx.closePath(); }); break;
+    case 'zoomIn': mix(q, zoom(1 + q)); break;
+    case 'zoomOut': mix(q, null, zoom(lerp(1.6, 1, q))); break;
     case 'spin': {
       const c = p < 0.5 ? A : B, k = p < 0.5 ? p * 2 : (1 - p) * 2;
       draw(c, 1, () => { ctx.translate(W / 2, H / 2); ctx.rotate(k * Math.PI * (p < 0.5 ? 1 : -1)); ctx.scale(1 - k * 0.5, 1 - k * 0.5); ctx.translate(-W / 2, -H / 2); });
@@ -525,13 +546,13 @@ function drawTransition(ctx, type, p, A, B, W, H) {
       ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = 0.35 * k; ctx.drawImage(c, W * 0.02 * k, 0); ctx.restore();
       break;
     }
-    case 'shake': { const k = 1 - Math.abs(p - 0.5) * 2, dx = (rand(Math.floor(p * 40)) - 0.5) * W * 0.06 * k; draw(A, 1, () => ctx.translate(dx, 0)); draw(B, q, () => ctx.translate(dx, 0)); break; }
+    case 'shake': { const k = 1 - Math.abs(p - 0.5) * 2, dx = (rand(Math.floor(p * 40)) - 0.5) * W * 0.06 * k, sh = (x) => x.translate(dx, 0); mix(q, sh, sh); break; }
     case 'split': {
       draw(B);
       if (A) { ctx.drawImage(A, 0, 0, W / 2, H, -q * W / 2, 0, W / 2, H); ctx.drawImage(A, W / 2, 0, W / 2, H, W / 2 + q * W / 2, 0, W / 2, H); }
       break;
     }
-    default: draw(A); draw(B, q); // fade
+    default: mix(q); // fade
   }
 }
 
@@ -663,9 +684,10 @@ export function activeVisual(project, t) {
     const clips = project.clips.filter((c) => c.trackId === tk.id).sort((a, b) => a.start - b.start);
     for (let j = 0; j < clips.length; j++) {
       const c = clips[j], prev = clips[j - 1], next = clips[j + 1];
-      const tin = c.transition && prev && Math.abs(clipEnd(prev) - c.start) < 0.05 ? c.transition.duration / 2 : 0;
-      const tout = next && next.transition && Math.abs(clipEnd(c) - next.start) < 0.05 ? next.transition.duration / 2 : 0;
-      if (t >= c.start - tin && t < clipEnd(c) + tout) out.push({ clip: c, track: tk, prev, next, tin, tout });
+      const touch = (a, b) => a && b && Math.abs(clipEnd(a) - b.start) < 0.05;
+      // `held`: past its end, still needed on its last frame by the next clip's entry transition.
+      const hold = touch(c, next) && !c.transitionOut ? transIn(next) : 0;
+      if (t >= c.start && t < clipEnd(c) + hold) out.push({ clip: c, track: tk, prev: touch(prev, c) && !prev.transitionOut ? prev : null, held: t >= clipEnd(c) });
     }
   }
   return out;
@@ -705,7 +727,6 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
   ctx.fillStyle = project.background.type === 'color' ? project.background.color : '#000';
   ctx.fillRect(0, 0, W, H);
   const items = activeVisual(project, t);
-  const done = new Set();
   const linked = items.map((i) => i.clip).filter((c) => c.type === 'effect' && t >= c.start && t < clipEnd(c) && effectLink(project, c));
   const fxFor = (kind, id) => linked.filter((c) => c.link.kind === kind && c.link.id === id);
   // Clips of a track with linked effects are drawn on their own layer, which gets the effects and is then laid over the frame.
@@ -722,7 +743,6 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       flush();
       if (fxFor('track', it.track.id).length) { const [, lx] = scratch('fx-trk', W, H); lx.clearRect(0, 0, W, H); cx = lx; layerTrack = it.track.id; }
     }
-    if (done.has(c.id)) continue;
     if (c.type === 'text') {
       if (t >= c.start && t < clipEnd(c)) {
         const own = fxFor('clip', c.id);
@@ -739,22 +759,29 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       if (t >= c.start && t < clipEnd(c) && !effectLink(project, c)) runEffectClip(cx, c, t, W, H, false);
       continue;
     }
+    if (it.held) continue; // drawn by the next clip's entry transition
     const media = mediaOf(project, c);
     const d = getDrawable(c, media, t);
     const bgFor = (clip, dr) => { if (it.track.main && project.background.type === 'blur') drawBackground(cx, project.background, dr, W, H); };
-    // Transition into this clip from the previous one (centered on the cut).
-    const inTrans = it.tin > 0 && t < c.start + it.tin;
-    const outTrans = it.tout > 0 && t >= clipEnd(c) - it.tout;
-    if (inTrans || outTrans) {
-      const A = inTrans ? it.prev : c, B = inTrans ? c : it.next;
-      const tr = B.transition, half = tr.duration / 2, cut = B.start;
-      const p = clamp((t - (cut - half)) / tr.duration, 0, 1);
-      const dA = getDrawable(A, mediaOf(project, A), t), dB = getDrawable(B, mediaOf(project, B), t);
-      bgFor(A, p < 0.5 ? dA : dB);
-      const la = cloneLayer(drawVisual(cx, A, t, dA, W, H, { layer: true, layerKey: 'tA', media: mediaOf(project, A) }), 'tA2', W, H);
-      const lb = drawVisual(cx, B, t, dB, W, H, { layer: true, layerKey: 'tB', media: mediaOf(project, B) });
-      drawTransition(cx, tr.type, p, la, lb, W, H);
-      done.add(A.id); done.add(B.id);
+    const tin = transIn(c), tout = transOut(c);
+    if ((tin && t < c.start + tin) || (tout && t >= clipEnd(c) - tout)) {
+      // Each side on its own full-frame layer (background, clip, its linked effects), then mixed.
+      const layer = (clip, tc, key) => {
+        const [lc, lx] = scratch(key, W, H), m = mediaOf(project, clip), dr = clip === c ? d : getDrawable(clip, m, tc);
+        lx.clearRect(0, 0, W, H);
+        if (it.track.main && project.background.type === 'blur') drawBackground(lx, project.background, dr, W, H);
+        drawVisual(lx, clip, tc, dr, W, H, { media: m });
+        for (const e of fxFor('clip', clip.id)) runEffectClip(lx, e, tc, W, H, true);
+        return lc;
+      };
+      if (tin && t < c.start + tin) {
+        const A = it.prev;
+        const la = A ? layer(A, Math.min(t, clipEnd(A) - 1e-3), 'tA') : null;
+        drawTransition(cx, c.transition.type, (t - c.start) / tin, la, layer(c, t, 'tB'), W, H);
+      } else {
+        const type = c.transitionOut.type;
+        drawTransition(cx, EXIT_AS[type] || type, (clipEnd(c) - t) / tout, null, layer(c, t, 'tB'), W, H);
+      }
       continue;
     }
     if (t < c.start || t >= clipEnd(c)) continue;

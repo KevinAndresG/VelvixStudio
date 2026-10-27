@@ -213,7 +213,7 @@ export function splitClip(c, t) {
   if (c.reverse) c.in = c.in + R.span;
   // Each half keeps its part of the curve; speed = that part's average, so the mapping is unchanged.
   if (c.curve) { right.curve = R.curve; c.curve = L.curve; right.speed = R.speed; c.speed = L.speed; }
-  right.transition = null;
+  right.transition = null; c.transitionOut = null; // entry stays on the left half, exit moves to the right one
   if (c.words) { right.words = c.words.filter((w) => w.e > leftDur).map((w) => ({ ...w, s: w.s - leftDur, e: w.e - leftDur })); c.words = c.words.filter((w) => w.s < leftDur); }
   // Split keyframes between halves.
   for (const k of Object.keys(c.kf || {})) { right.kf[k] = c.kf[k].filter((f) => f.t >= leftDur).map((f) => ({ ...f, t: f.t - leftDur })); c.kf[k] = c.kf[k].filter((f) => f.t < leftDur); }
@@ -253,13 +253,13 @@ export function trimAtPlayhead(side) {
   let seek = t;
   update((d) => {
     for (const tc of targets) {
-      const c = d.clips.find((x) => x.id === tc.id), { fadeIn, fadeOut, transition } = c;
+      const c = d.clips.find((x) => x.id === tc.id), { fadeIn, fadeOut, transition, transitionOut } = c;
       const right = splitClip(c, t);
       if (side === 'left') {
         Object.assign(right, { id: c.id, fadeIn, transition });
         d.clips[d.clips.indexOf(c)] = right;
         if (getState().magnet && d.tracks.find((k) => k.id === c.trackId).main) seek = Math.min(seek, c.start);
-      } else c.fadeOut = fadeOut;
+      } else Object.assign(c, { fadeOut, transitionOut });
     }
     packMain(d);
   });
@@ -424,20 +424,16 @@ export function addFilterLayer(preset) {
   setState({ selection: [id] });
 }
 
-// Applies a transition at the start of the selected clip, or at the cut nearest the playhead.
-export function applyTransition(type, duration = 0.6) {
-  const p = proj(), t = getState().time;
+// Applies an entry (side 'in') or exit ('out') transition to the selected clip; with no selection, entry goes to the
+// main-track cut nearest the playhead and exit to the main-track clip under it. type null removes it.
+export function applyTransition(type, duration = 0.6, side = 'in') {
+  const p = proj(), t = getState().time, m = mainTrack(p), main = p.clips.filter((c) => c.trackId === m.id);
   let target = p.clips.find((c) => sel().includes(c.id) && (c.type === 'video' || c.type === 'image'));
-  if (!target) {
-    const m = mainTrack(p);
-    const cuts = p.clips.filter((c) => c.trackId === m.id && c.start > 0.01);
-    target = cuts.sort((a, b) => Math.abs(a.start - t) - Math.abs(b.start - t))[0];
-  }
-  if (!target) return toast('Necesitas dos clips contiguos para una transición');
-  const prev = p.clips.find((c) => c.trackId === target.trackId && Math.abs(clipEnd(c) - target.start) < 0.05);
-  if (!prev) return toast('El clip debe tener otro clip justo antes');
-  const d = Math.min(duration, target.duration, prev.duration);
-  update((x) => { x.clips.find((c) => c.id === target.id).transition = type ? { type, duration: d } : null; });
+  if (!target && side === 'in') target = main.filter((c) => c.start > 0.01).sort((a, b) => Math.abs(a.start - t) - Math.abs(b.start - t))[0];
+  if (!target) target = main.find((c) => t >= c.start && t < clipEnd(c));
+  if (!target) return toast('Selecciona un clip de video o imagen');
+  const key = side === 'out' ? 'transitionOut' : 'transition';
+  update((x) => { x.clips.find((c) => c.id === target.id)[key] = type ? { type, duration: Math.min(duration, target.duration) } : null; });
   setState({ selection: [target.id] });
 }
 

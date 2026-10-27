@@ -284,7 +284,7 @@ export const ANIM_LOOP = { none: 'Ninguna', pulse: 'Pulso', shake: 'Temblor', fl
 export const TRANSITIONS = {
   fade: 'Disolver', fadeBlack: 'Fundido negro', fadeWhite: 'Fundido blanco', flash: 'Destello',
   slideLeft: 'Deslizar ←', slideRight: 'Deslizar →', slideUp: 'Deslizar ↑', slideDown: 'Deslizar ↓',
-  push: 'Empujar', wipeLeft: 'Barrido ←', wipeRight: 'Barrido →', wipeDown: 'Barrido ↓', circle: 'Círculo', diamond: 'Diamante',
+  push: 'Empujar', wipeLeft: 'Barrido ←', wipeRight: 'Barrido →', wipeDown: 'Barrido ↓', wipeUp: 'Barrido ↑', circle: 'Círculo', diamond: 'Diamante',
   zoomIn: 'Zoom in', zoomOut: 'Zoom out', spin: 'Giro', blur: 'Desenfoque', glitch: 'Glitch', shake: 'Sacudida', split: 'Partir',
 };
 
@@ -350,8 +350,6 @@ export function isKeyword(word) {
   if (w.length >= 3 && w === w.toUpperCase() && w !== w.toLowerCase()) return true;
   return plain.length >= 7 && !STOP.has(plain);
 }
-
-export const STICKERS = ['😀', '😂', '🤣', '😍', '🥰', '😎', '🤩', '😱', '😭', '😡', '🤯', '🥳', '👍', '👏', '🙌', '🔥', '✨', '💯', '❤️', '💔', '⭐', '🌟', '⚡', '💥', '🎉', '🎊', '🎵', '🎶', '📍', '👉', '👈', '👆', '👇', '✅', '❌', '⚠️', '❓', '❗', '💡', '🚀', '🏆', '💰', '📈', '📉', '🍕', '☕', '🌈', '☀️', '🌙', '❄️', '🌊', '🐶', '🐱', '🦄', '👀', '💬', '🗯️', '💤', '🎬', '📸', '🎮'];
 
 export const FONTS = ['Segoe UI', 'Arial', 'Arial Black', 'Impact', 'Bahnschrift', 'Georgia', 'Times New Roman', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Comic Sans MS', 'Courier New', 'Consolas', 'Segoe Script', 'Segoe Print', 'Gabriola', 'Ink Free', 'Candara', 'Cambria', 'Constantia', 'Corbel', 'Franklin Gothic Medium', 'Lucida Console', 'Palatino Linotype', 'Sitka Text'];
 

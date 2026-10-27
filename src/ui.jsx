@@ -26,7 +26,7 @@ const P = {
   image: 'M3 3h18v18H3zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3zM21 15l-5-5L5 21', wand: 'M15 4V2M15 16v-2M8 9h2M20 9h2M17.8 11.8 19 13M17.8 6.2 19 5M3 21l9-9M12.2 6.2 11 5',
   speed: 'M12 14l4-4M3.3 19A10 10 0 1 1 20.7 19', more: 'M5 12h.01M12 12h.01M19 12h.01', edit: 'M4 20h4L19 9l-4-4L4 16zM14 6l4 4',
   keyboard: 'M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10', layers: 'M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5',
-  stepBack: 'M19 20 9 12l10-8zM5 19V5', stepFwd: 'M5 4l10 8-10 8zM19 5v14',
+  stepBack: 'M19 20 9 12l10-8zM5 19V5', sticker: 'M4 4h16v9l-7 7H4zM13 20v-5a2 2 0 0 1 2-2h5', stepFwd: 'M5 4l10 8-10 8zM19 5v14',
 };
 
 export function Icon({ name, size = 18, stroke = 1.8, fill = false, style }) {

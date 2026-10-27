@@ -93,7 +93,7 @@ function writeLut(file) {
       M.newClip('image', { id: 'a', trackId: 'v', mediaId: 'm', start: 0, duration: 2, fit: 'stretch', filter: { ...M.DEFAULT_FILTER, lut } }),
       M.newClip('image', { id: 'b', trackId: 'v', mediaId: 'm', start: 2, duration: 2, fit: 'stretch', filter: { ...M.DEFAULT_FILTER, saturation: -100 }, transition: { type: 'fade', duration: 1 } }),
     ] };
-    R.renderFrame(ox, tp, 2, () => ({ el: solid('200,50,10'), w: 64, h: 36 }), 160, 90);
+    R.renderFrame(ox, tp, 2.5, () => ({ el: solid('200,50,10'), w: 64, h: 36 }), 160, 90); // entry transition: midpoint 0.5 s after the cut
     o.trans = mean(ox.getImageData(0, 0, 160, 90).data);
     // Project saved before Sesión 5: filter object without the new keys.
     const old = { preset: 'vintage', intensity: 100, exposure: 0, brightness: 0, contrast: 0, saturation: 0, temperature: 0, tint: 0, hue: 0, fade: 0, vignette: 0, grain: 0, blur: 0, sharpen: 0 };

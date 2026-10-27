@@ -20,7 +20,8 @@ export function imageFor(path) {
 export const videoPath = (clip, media) => vidSrc(clip, media).path;
 // Preview plays the light copy of a big video when there is one (same timing, smaller frame; layout is by aspect).
 const previewPath = (clip, media) => { const p = videoPath(clip, media); return media.preview && p === (media.proxy || media.path) ? media.preview : p; };
-export function videoTime(clip, media, t) { const v = vidSrc(clip, media); return clamp(sourceTime(clip, t, media) - v.off, 0, Math.max(0, v.dur - 0.001)); }
+// t is held inside the clip: before it, its first frame (preloading); after it, its last (entry transition of the next clip).
+export function videoTime(clip, media, t) { const v = vidSrc(clip, media); return clamp(sourceTime(clip, clamp(t, clip.start, clipEnd(clip) - 1e-3), media) - v.off, 0, Math.max(0, v.dur - 0.001)); }
 // Path audio should come from (effects-rendered WAV wins).
 export const audioPath = (clip, media) => (clip.fxPath) || (clip.reverse && media.reversed) || media.proxy || media.path;
 
@@ -165,7 +166,7 @@ export class SourcePool {
       if (!media || media.missing) continue;
       needVideo.add(c.id);
       const e = this._el(this.videos, c, previewPath(c, media), 'video');
-      const want = Math.min(videoTime(c, media, Math.max(t, c.start - (it.tin || 0))), vidSrc(c, media).dur - 0.01);
+      const want = Math.min(videoTime(c, media, t), vidSrc(c, media).dur - 0.01);
       const ownsAudio = !c.detached && !c.fxPath && !vidSrc(c, media).alt; // a processed copy has no audio: an <audio> plays it
       const tk = trackOf(project, c);
       const active = !it.upcoming && t >= c.start && t < clipEnd(c);
@@ -173,7 +174,7 @@ export class SourcePool {
       if (e.gain) e.gain.gain.setTargetAtTime(vol, now, 0.01);
       const speed = speedAt(c, t);
       e.active = active; e.fast = speed > 16;
-      this._drive(e.el, want, speed, playing && !it.upcoming, hold);
+      this._drive(e.el, want, speed, playing && active, hold); // held/upcoming: paused on its frame
     }
     for (const c of project.clips) {
       if (c.type !== 'audio' && c.type !== 'video') continue;

@@ -99,7 +99,8 @@ const Clip = React.memo(function Clip({ clip, track, media, zoom, selected, ghos
         <span>{label}</span>
         {clip.type !== 'text' && clip.type !== 'effect' && <em>{fmtTime(clip.duration)}</em>}
       </div>
-      {clip.transition && <span className="trans-mark" title={`Transición: ${TRANSITIONS[clip.transition.type]}`} style={{ width: Math.max(10, (clip.transition.duration / 2) * zoom) }}>⧓</span>}
+      {clip.transition && <span className="trans-mark" title={`Entrada: ${TRANSITIONS[clip.transition.type]}`} style={{ width: Math.max(10, Math.min(clip.transition.duration, clip.duration) * zoom) }}>⧓</span>}
+      {clip.transitionOut && <span className="trans-mark out" title={`Salida: ${TRANSITIONS[clip.transitionOut.type]}`} style={{ width: Math.max(10, Math.min(clip.transitionOut.duration, clip.duration) * zoom) }}>⧓</span>}
       {(clip.fadeIn > 0 || clip.fadeOut > 0) && (
         <svg className="fades" width={width} height={h} preserveAspectRatio="none">
           {clip.fadeIn > 0 && <polygon points={`0,${h} ${clip.fadeIn * zoom},0 0,0`} />}
@@ -352,10 +353,6 @@ export default function Timeline() {
           } else if (!tk.main) {
             const clash = p.clips.some((x) => x.trackId === tk.id && x.id !== c.id && x.start < clipEnd(c) - 1e-4 && clipEnd(x) > c.start + 1e-4);
             if (clash) c.trackId = ensureTrack(p, kindFor(c), c.start, clipEnd(c), [c.id]);
-          }
-          if (c.transition) {
-            const prev = p.clips.find((x) => x.trackId === c.trackId && Math.abs(clipEnd(x) - c.start) < 0.05);
-            if (!prev) c.transition = null;
           }
         }
         packMain(p); cleanupTracks(p);

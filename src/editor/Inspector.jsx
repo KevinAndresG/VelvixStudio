@@ -7,10 +7,12 @@ import {
 } from '../engine/model.js';
 import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../ui.jsx';
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
-import { presetStyle } from './MediaPanel.jsx';
+import { presetStyle, TransGrid } from './MediaPanel.jsx';
+import { transIn, transOut } from '../engine/render.js';
 import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
 import ColorTab from './ColorTab.jsx';
 import { BADGES, BADGE_THEMES } from '../engine/stickers.js';
+import { EMOJI_CATS } from './emojis.js';
 import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
@@ -66,12 +68,12 @@ function ClipPanel({ clip, project, count }) {
   const media = mediaOf(project, clip);
   const visual = clip.type === 'video' || clip.type === 'image';
   const tabs = {};
-  if (clip.type === 'text') Object.assign(tabs, clip.text.badge ? { badge: 'Sticker', anim: 'Animación', basic: 'Posición' } : { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
+  if (clip.type === 'text') Object.assign(tabs, clip.text.badge ? { badge: 'Sticker', anim: 'Animación', basic: 'Posición' } : clip.sticker ? { emoji: 'Emoji', anim: 'Animación', basic: 'Posición' } : { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
   if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', ai: 'IA', anim: 'Animación', speed: 'Velocidad' });
   if (clip.type === 'video' && media && (media.hasAudio || clip.fxPath)) tabs.audio = 'Audio';
   if (clip.type === 'audio') Object.assign(tabs, { audio: 'Audio', speed: 'Velocidad' });
   if (clip.type === 'effect') tabs.effect = clip.filter ? 'Filtro' : 'Efecto';
-  if (visual && clip.transition) tabs.trans = 'Transición';
+  if (visual) tabs.trans = 'Transición';
   const [tab, setTab] = useState(Object.keys(tabs)[0]);
   const cur = tabs[tab] ? tab : Object.keys(tabs)[0];
   const edit = useEditor(clip);
@@ -86,6 +88,7 @@ function ClipPanel({ clip, project, count }) {
         <EaseSection clip={clip} />
         {cur === 'text' && <TextTab clip={clip} edit={edit} />}
         {cur === 'badge' && <BadgeTab clip={clip} edit={edit} />}
+        {cur === 'emoji' && <EmojiTab clip={clip} edit={edit} />}
         {cur === 'style' && <StyleTab clip={clip} edit={edit} />}
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
         {cur === 'adjust' && <AdjustTab clip={clip} edit={edit} />}
@@ -629,6 +632,24 @@ function BadgeTab({ clip, edit }) {
   );
 }
 
+// Emoji sticker: no font/style controls, just the emoji itself, its size and shadow.
+function EmojiTab({ clip, edit }) {
+  const t = clip.text;
+  return (
+    <Section title="Emoji">
+      <div className="emoji-current">{t.content}</div>
+      <Slider label="Tamaño" value={t.size} min={40} max={600} onChange={(v) => edit((c) => { c.text.size = v; }, 'size')} />
+      <Toggle label="Sombra" value={t.shadow.on} onChange={(v) => edit((c) => { c.text.shadow = { ...c.text.shadow, on: v, color: '#00000088', blur: 18, x: 0, y: 8 }; })} />
+      <h5>Cambiar por</h5>
+      <div className="sticker-grid emoji-swap">
+        {EMOJI_CATS.flatMap(([, , l]) => l).filter((e, i, a) => a.indexOf(e) === i).map((e) => (
+          <button key={e} className={e === t.content ? 'active' : ''} onClick={() => edit((c) => { c.text.content = e; c.name = `Sticker ${e}`; })}>{e}</button>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function StyleTab({ clip, edit }) {
   const t = clip.text;
   const sub = (group, k, v, key) => edit((c) => { c.text[group] = { ...c.text[group], [k]: v }; }, key);
@@ -734,15 +755,32 @@ function EffectTab({ clip, edit }) {
 }
 
 function TransTab({ clip, edit }) {
-  const tr = clip.transition;
   return (
-    <Section title="Transición de entrada">
-      <Select value={tr.type} options={TRANSITIONS} onChange={(v) => edit((c) => { c.transition.type = v; })} />
-      <Slider label="Duración" value={tr.duration} min={0.1} max={Math.min(3, clip.duration)} step={0.05} unit="s" onChange={(v) => edit((c) => { c.transition.duration = v; }, 'td')} />
-      <div className="row-btns">
-        <button className="btn sm" onClick={() => update((p) => { const t = clip.transition; const m = p.tracks.find((x) => x.main); for (const c of p.clips) if (c.trackId === m.id && c.start > 0.01) c.transition = { ...t }; })}>Aplicar a todos los cortes</button>
-        <button className="btn sm danger" onClick={() => edit((c) => { c.transition = null; })}>Quitar</button>
-      </div>
+    <>
+      <TransSection clip={clip} edit={edit} field="transition" title="Entrada" hint="Empieza al inicio del clip. El clip anterior queda en su último fotograma mientras entra éste; sin clip antes, entra sobre lo que hay debajo." />
+      <TransSection clip={clip} edit={edit} field="transitionOut" title="Salida" hint="Termina al final del clip y deja ver lo que hay debajo (o el fondo)." />
+    </>
+  );
+}
+function TransSection({ clip, edit, field, title, hint }) {
+  const tr = clip[field], exit = field === 'transitionOut';
+  // Entry and exit share the clip: each can use what the other leaves.
+  const max = Math.max(0.1, Math.min(3, clip.duration - (exit ? transIn(clip) : transOut(clip))));
+  const all = () => update((p) => {
+    for (const c of p.clips) {
+      if (c.trackId !== clip.trackId || (c.type !== 'video' && c.type !== 'image')) continue;
+      if (!exit && !p.clips.some((x) => x.trackId === c.trackId && Math.abs(clipEnd(x) - c.start) < 0.05)) continue; // entries only at cuts
+      c[field] = { ...tr, duration: Math.min(tr.duration, c.duration) };
+    }
+  });
+  return (
+    <Section title={title} right={tr && <button className="link" onClick={() => edit((c) => { c[field] = null; })}>Quitar</button>}>
+      <TransGrid value={tr && tr.type} exit={exit} onPick={(v) => edit((c) => { c[field] = { duration: Math.min(0.6, max), ...c[field], type: v }; })} />
+      {tr && <>
+        <Slider label="Duración" value={Math.min(tr.duration, max)} min={0.1} max={max} step={0.05} unit="s" onChange={(v) => edit((c) => { c[field].duration = v; }, 'td' + field)} />
+        <button className="btn sm" onClick={all}>{exit ? 'Aplicar a todos los clips de la pista' : 'Aplicar a todos los cortes de la pista'}</button>
+      </>}
+      <p className="hint">{hint}</p>
     </Section>
   );
 }

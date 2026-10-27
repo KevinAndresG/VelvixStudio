@@ -1,8 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useStore, getState, setState, update, toast } from '../store.js';
-import { fmtTime, mediaUrl, TEXT_PRESETS, STICKERS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER, DEFAULT_TEXT } from '../engine/model.js';
+import { fmtTime, mediaUrl, TEXT_PRESETS, EFFECTS, TRANSITIONS, FILTER_PRESETS, effectiveFilter, DEFAULT_FILTER, DEFAULT_TEXT } from '../engine/model.js';
 import { BADGES, BADGE_THEMES, drawBadge, badgeSize } from '../engine/stickers.js';
-import { cssFilter } from '../engine/render.js';
+import { cssFilter, drawTransition, EXIT_AS } from '../engine/render.js';
 import { Icon, IconBtn, Select, Slider, Toggle, Modal } from '../ui.jsx';
 import { importDialog, importPaths, addToTimeline, addText, addSticker, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia, removeMedia, unusedMedia } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
@@ -11,10 +11,11 @@ import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 import BrandTab from './BrandTab.jsx';
 import VisionTab from './VisionTab.jsx';
+import { EMOJI_CATS, recentEmojis, pushRecentEmoji } from './emojis.js';
 import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize } from './library.js';
 
 const TABS = [
-  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'smile', 'Stickers'],
+  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'sticker', 'Stickers'], ['emojis', 'smile', 'Emojis'],
   ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'], ['ai', 'wand', 'IA'], ['brand', 'diamond', 'Marca'],
 ];
 
@@ -69,6 +70,7 @@ export default function MediaPanel() {
         {tab === 'library' && <LibraryTab />}
         {tab === 'text' && <TextTab />}
         {tab === 'stickers' && <StickersTab />}
+        {tab === 'emojis' && <EmojisTab />}
         {tab === 'effects' && <EffectsTab />}
         {tab === 'transitions' && <TransitionsTab />}
         {tab === 'filters' && <FiltersTab />}
@@ -338,11 +340,30 @@ function StickersTab() {
       </div>
       <button className="btn wide import-sticker" onClick={importSticker}><Icon name="upload" size={15} /> Importar GIF, WebP o Lottie animado</button>
       <p className="hint">Los GIF/WebP/APNG con transparencia y las animaciones Lottie (.json) se repiten en bucle y conservan el fondo transparente.</p>
-      <h5>Stickers y emojis</h5>
-      <div className="sticker-grid">
-        {STICKERS.map((s) => <button key={s} onClick={() => addSticker(s)} title="Agregar sticker">{s}</button>)}
+      <p className="hint">También puedes importar PNG transparentes como stickers desde Medios. Los emojis están en su propia pestaña.</p>
+    </div>
+  );
+}
+
+function EmojisTab() {
+  const [cat, setCat] = useState('');
+  const [recent, setRecent] = useState(recentEmojis);
+  const add = (e) => { addSticker(e); pushRecentEmoji(e); setRecent(recentEmojis()); };
+  const cats = cat ? EMOJI_CATS.filter(([k]) => k === cat) : EMOJI_CATS;
+  return (
+    <div className="panel">
+      <div className="chips wrap">
+        <button className={!cat ? 'active' : ''} onClick={() => setCat('')}>Todos</button>
+        {EMOJI_CATS.map(([k, name]) => <button key={k} className={cat === k ? 'active' : ''} onClick={() => setCat(k)}>{name}</button>)}
       </div>
-      <p className="hint">También puedes importar PNG transparentes como stickers desde Medios.</p>
+      {!cat && recent.length > 0 && <><h5>Recientes</h5><div className="sticker-grid">{recent.map((s) => <button key={s} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div></>}
+      {cats.map(([k, name, list]) => (
+        <React.Fragment key={k}>
+          <h5>{name}</h5>
+          <div className="sticker-grid">{list.map((s, i) => <button key={s + i} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div>
+        </React.Fragment>
+      ))}
+      <p className="hint">Se agregan en el cursor como sticker grande; cámbiale tamaño, animación o posición en el inspector.</p>
     </div>
   );
 }
@@ -362,19 +383,66 @@ function EffectsTab() {
   );
 }
 
+// Two sample frames (A → B) for the transition previews, built once.
+let sampleFrames = null;
+function samples(W, H) {
+  if (sampleFrames) return sampleFrames;
+  sampleFrames = [['#5b3fd6', '#2a1a7a', 'A'], ['#ff8a3d', '#d6245e', 'B']].map(([c1, c2, l]) => {
+    const c = document.createElement('canvas'); c.width = W; c.height = H;
+    const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, W, H);
+    g.addColorStop(0, c1); g.addColorStop(1, c2); x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.fillStyle = '#ffffffcc'; x.font = `800 ${H * 0.5}px Segoe UI`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(l, W / 2, H / 2);
+    return c;
+  });
+  return sampleFrames;
+}
+// Transition preview with the real renderer: still at mid-point, animates while hovered.
+function TransThumb({ type, exit, hover }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const c = ref.current, x = c.getContext('2d'), [A, B] = samples(c.width, c.height);
+    const paint = (p) => {
+      x.setTransform(1, 0, 0, 1, 0, 0); x.globalAlpha = 1; x.filter = 'none'; x.fillStyle = '#111'; x.fillRect(0, 0, c.width, c.height);
+      if (exit) drawTransition(x, EXIT_AS[type] || type, 1 - p, null, B, c.width, c.height);
+      else drawTransition(x, type, p, A, B, c.width, c.height);
+    };
+    if (!hover) { paint(0.45); return; }
+    let raf; const t0 = performance.now();
+    const loop = () => { const k = ((performance.now() - t0) / 1000) % 1.6; paint(Math.min(1, Math.max(0, (k - 0.2) / 1.1))); raf = requestAnimationFrame(loop); };
+    loop();
+    return () => cancelAnimationFrame(raf);
+  }, [type, exit, hover]);
+  return <canvas ref={ref} className="tr-thumb" width={128} height={72} />;
+}
+export function TransGrid({ value, exit, onPick }) {
+  const [hover, setHover] = useState(null);
+  return (
+    <div className="fx-grid">
+      {Object.entries(TRANSITIONS).map(([k, v]) => (
+        <button key={k} data-trans={k} className={`fx trans ${value === k ? 'active' : ''}`} onClick={() => onPick(k)} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)} title={v}>
+          <TransThumb type={k} exit={exit} hover={hover === k} /><small>{v}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TransitionsTab() {
   const [dur, setDur] = useState(0.6);
+  const [side, setSide] = useState('in');
   return (
     <div className="panel">
       <h5>Transiciones</h5>
-      <p className="hint">Selecciona un clip (o deja el cursor cerca de un corte) y elige una transición.</p>
-      <Slider label="Duración" value={dur} min={0.1} max={2} step={0.1} unit="s" onChange={setDur} />
-      <div className="fx-grid">
-        {Object.entries(TRANSITIONS).map(([k, v]) => (
-          <button key={k} className="fx trans" onClick={() => applyTransition(k, dur)}><span className={`tr-ico tr-${k}`} /><small>{v}</small></button>
-        ))}
-        <button className="fx" onClick={() => applyTransition(null)}><span>⊘</span><small>Quitar</small></button>
+      <div className="seg">
+        <button className={side === 'in' ? 'active' : ''} onClick={() => setSide('in')}>Entrada</button>
+        <button className={side === 'out' ? 'active' : ''} onClick={() => setSide('out')}>Salida</button>
       </div>
+      <p className="hint">{side === 'in'
+        ? 'Empieza justo al inicio del clip: el clip anterior se queda en su último fotograma mientras entra el nuevo. Sin clip antes, entra sobre lo que hay debajo.'
+        : 'Termina justo al final del clip y deja ver lo que hay debajo (o el fondo).'} Selecciona un clip o deja el cursor sobre él.</p>
+      <Slider label="Duración" value={dur} min={0.1} max={3} step={0.1} unit="s" onChange={setDur} />
+      <TransGrid exit={side === 'out'} onPick={(k) => applyTransition(k, dur, side)} />
+      <button className="btn wide" onClick={() => applyTransition(null, dur, side)}>Quitar transición de {side === 'in' ? 'entrada' : 'salida'}</button>
     </div>
   );
 }

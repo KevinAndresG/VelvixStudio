@@ -206,7 +206,12 @@ body.col-resizing * { cursor: ew-resize !important; }
 .fx:hover { border-color: var(--acc); background: var(--bg4); }
 .fx span { font-size: 22px; height: 28px; display: grid; place-items: center; color: var(--acc2); }
 .fx small { font-size: 10.5px; color: var(--tx2); text-align: center; line-height: 1.2; }
-.tr-ico { width: 34px; height: 22px; border-radius: 4px; background: linear-gradient(90deg, #4a3fa0 50%, #1e8a7c 50%); }
+.tr-thumb { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; display: block; background: #111; }
+.fx.trans { padding: 6px 6px 8px; }
+.fx.trans.active { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
+.emoji-current { font-size: 64px; text-align: center; font-family: "Segoe UI Emoji"; line-height: 1.2; }
+.emoji-swap { max-height: 260px; overflow-y: auto; }
+.sticker-grid button.active { background: var(--bg4); border-color: var(--acc); }
 .tr-fade, .tr-blur { background: linear-gradient(90deg, #4a3fa0, #1e8a7c); }
 .tr-fadeBlack { background: linear-gradient(90deg, #4a3fa0, #000, #1e8a7c); } .tr-fadeWhite, .tr-flash { background: linear-gradient(90deg, #4a3fa0, #fff, #1e8a7c); }
 .tr-circle { background: radial-gradient(circle, #1e8a7c 40%, #4a3fa0 42%); } .tr-diamond { background: conic-gradient(from 45deg, #1e8a7c 25%, #4a3fa0 0 50%, #1e8a7c 0 75%, #4a3fa0 0); }
@@ -357,7 +362,8 @@ input[type=color]::-webkit-color-swatch-wrapper { padding: 2px; } input[type=col
 .clip-label span { overflow: hidden; text-overflow: ellipsis; }
 .clip-label em { font-style: normal; opacity: .7; margin-left: auto; font-size: 10px; }
 .badge { font-size: 9.5px; background: rgba(0,0,0,.55); border-radius: 3px; padding: 0 4px; font-weight: 600; }
-.trans-mark { position: absolute; left: 0; top: 50%; transform: translateY(-50%); height: 20px; background: rgba(255,255,255,.85); color: #222; border-radius: 0 5px 5px 0; display: grid; place-items: center; font-size: 11px; pointer-events: none; }
+.trans-mark { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(255,255,255,.55), rgba(255,255,255,.12)); border-right: 2px solid rgba(255,255,255,.85); color: #222; display: grid; place-items: center start; padding-left: 3px; font-size: 11px; pointer-events: none; }
+.trans-mark.out { left: auto; right: 0; border-right: 0; border-left: 2px solid rgba(255,255,255,.85); background: linear-gradient(270deg, rgba(255,255,255,.55), rgba(255,255,255,.12)); place-items: center end; padding: 0 3px 0 0; }
 .fades { position: absolute; inset: 0; pointer-events: none; } .fades polygon { fill: rgba(0,0,0,.4); }
 .kf-dot { position: absolute; bottom: 0; transform: translateX(-50%); color: var(--yellow); font-size: 13px; line-height: 14px; padding: 0 3px; z-index: 4; cursor: grab; text-shadow: 0 0 2px #000; }
 .kf-dot:hover { color: #fff; } .kf-dot:active { cursor: grabbing; }
