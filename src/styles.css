@@ -205,12 +205,14 @@ body.col-resizing * { cursor: ew-resize !important; }
 .fx { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 12px 4px 9px; border-radius: 9px; background: var(--bg3); border: 1px solid var(--line); }
 .fx:hover { border-color: var(--acc); background: var(--bg4); }
 .fx span { font-size: 22px; height: 28px; display: grid; place-items: center; color: var(--acc2); }
+.preset, .fx { position: relative; }
+.fav-star { position: absolute; top: 3px; right: 5px; font: normal 13px "Segoe UI Symbol", sans-serif; color: var(--tx2); opacity: 0; cursor: pointer; z-index: 1; }
+.preset:hover .fav-star, .fx:hover .fav-star { opacity: 0.7; }
+.fav-star.on, .fav-star.on:hover, .fav-star:hover { opacity: 1; color: #ffd23f; }
 .fx small { font-size: 10.5px; color: var(--tx2); text-align: center; line-height: 1.2; }
 .tr-thumb { width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; display: block; background: #111; }
 .fx.trans { padding: 6px 6px 8px; }
 .fx.trans.active { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
-.emoji-current { font-size: 64px; text-align: center; font-family: "Segoe UI Emoji"; line-height: 1.2; }
-.emoji-swap { max-height: 260px; overflow-y: auto; }
 .sticker-grid button.active { background: var(--bg4); border-color: var(--acc); }
 .tr-fade, .tr-blur { background: linear-gradient(90deg, #4a3fa0, #1e8a7c); }
 .tr-fadeBlack { background: linear-gradient(90deg, #4a3fa0, #000, #1e8a7c); } .tr-fadeWhite, .tr-flash { background: linear-gradient(90deg, #4a3fa0, #fff, #1e8a7c); }

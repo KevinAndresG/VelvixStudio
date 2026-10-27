@@ -12,7 +12,6 @@ import { transIn, transOut } from '../engine/render.js';
 import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
 import ColorTab from './ColorTab.jsx';
 import { BADGES, BADGE_THEMES } from '../engine/stickers.js';
-import { EMOJI_CATS } from './emojis.js';
 import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
 
 // Applies fn to every selected clip of the primary clip's type (batch editing, e.g. all captions).
@@ -68,7 +67,7 @@ function ClipPanel({ clip, project, count }) {
   const media = mediaOf(project, clip);
   const visual = clip.type === 'video' || clip.type === 'image';
   const tabs = {};
-  if (clip.type === 'text') Object.assign(tabs, clip.text.badge ? { badge: 'Sticker', anim: 'Animación', basic: 'Posición' } : clip.sticker ? { emoji: 'Emoji', anim: 'Animación', basic: 'Posición' } : { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
+  if (clip.type === 'text') Object.assign(tabs, clip.text.badge ? { badge: 'Sticker', anim: 'Animación', basic: 'Posición' } : { text: 'Texto', style: 'Estilo', anim: 'Animación', basic: 'Posición' });
   if (visual) Object.assign(tabs, { basic: 'Básico', adjust: 'Ajustes', color: 'Color', ai: 'IA', anim: 'Animación', speed: 'Velocidad' });
   if (clip.type === 'video' && media && (media.hasAudio || clip.fxPath)) tabs.audio = 'Audio';
   if (clip.type === 'audio') Object.assign(tabs, { audio: 'Audio', speed: 'Velocidad' });
@@ -88,7 +87,6 @@ function ClipPanel({ clip, project, count }) {
         <EaseSection clip={clip} />
         {cur === 'text' && <TextTab clip={clip} edit={edit} />}
         {cur === 'badge' && <BadgeTab clip={clip} edit={edit} />}
-        {cur === 'emoji' && <EmojiTab clip={clip} edit={edit} />}
         {cur === 'style' && <StyleTab clip={clip} edit={edit} />}
         {cur === 'basic' && <BasicTab clip={clip} edit={edit} project={project} visual={visual} />}
         {cur === 'adjust' && <AdjustTab clip={clip} edit={edit} />}
@@ -629,24 +627,6 @@ function BadgeTab({ clip, edit }) {
         <p className="hint">Se anima en bucle (cada 3 s){def.click ? ': un cursor pulsa el botón y cambia a «' + (b.label2 ?? def.label2 ?? '') + '»' : ''}. Muévelo y escálalo en el visor.</p>
       </Section>
     </>
-  );
-}
-
-// Emoji sticker: no font/style controls, just the emoji itself, its size and shadow.
-function EmojiTab({ clip, edit }) {
-  const t = clip.text;
-  return (
-    <Section title="Emoji">
-      <div className="emoji-current">{t.content}</div>
-      <Slider label="Tamaño" value={t.size} min={40} max={600} onChange={(v) => edit((c) => { c.text.size = v; }, 'size')} />
-      <Toggle label="Sombra" value={t.shadow.on} onChange={(v) => edit((c) => { c.text.shadow = { ...c.text.shadow, on: v, color: '#00000088', blur: 18, x: 0, y: 8 }; })} />
-      <h5>Cambiar por</h5>
-      <div className="sticker-grid emoji-swap">
-        {EMOJI_CATS.flatMap(([, , l]) => l).filter((e, i, a) => a.indexOf(e) === i).map((e) => (
-          <button key={e} className={e === t.content ? 'active' : ''} onClick={() => edit((c) => { c.text.content = e; c.name = `Sticker ${e}`; })}>{e}</button>
-        ))}
-      </div>
-    </Section>
   );
 }
 

@@ -1,5 +1,5 @@
 // v1.15.0 in the real app: entry transitions start AT the cut (nothing before it, previous clip held on its last frame),
-// exit transitions, transitions on a clip that doesn't fill the frame end clean, Emojis tab separated from Stickers.
+// exit transitions, transitions on a clip that doesn't fill the frame end clean.
 // Usage: node e2e/verify11.cjs   (PKG=1 for the packaged app).
 const { _electron } = require('../node_modules/playwright-core');
 const path = require('path');
@@ -73,18 +73,6 @@ const ff = (...a) => cp.execFileSync(FF, ['-y', '-v', 'error', ...a]);
   await page.waitForTimeout(300);
   const thumbs = await ev(() => document.querySelectorAll('.insp canvas.tr-thumb').length);
   check('inspector: cuadrícula de transiciones de entrada y salida', thumbs >= 40, String(thumbs));
-
-  // Emojis aparte de Stickers.
-  await page.locator('.left-tabs button[title="Stickers"]').click();
-  const inStickers = await ev(() => document.querySelectorAll('.left-body .sticker-grid').length);
-  await page.locator('.left-tabs button[title="Emojis"]').click();
-  const nEmojis = await ev(() => document.querySelectorAll('.left-body .sticker-grid button').length);
-  check('Stickers ya no mezcla emojis; pestaña Emojis con muchos', inStickers === 0 && nEmojis > 600, `${inStickers} / ${nEmojis}`);
-  await page.locator('.left-body .sticker-grid button', { hasText: '💰' }).first().click();
-  const emo = await ev(() => { const s = window.__velvix.store.getState(); return s.project.clips.find((c) => c.id === s.selection[0]); });
-  check('agregar emoji 💰 crea un sticker', emo && emo.sticker && emo.text.content === '💰');
-  const tabs = await ev(() => [...document.querySelectorAll('.insp .tabs button')].map((b) => b.textContent));
-  check('inspector del emoji sin pestañas de texto', tabs.includes('Emoji') && !tabs.includes('Estilo'), tabs.join(','));
 
   check('sin errores de página', !errors.length, errors.join(' | '));
   await app.close();

@@ -388,20 +388,6 @@ export function addText(preset = {}, content = 'Escribe aquí') {
   setState({ selection: [id] });
 }
 
-export function addSticker(emoji, loop = 'none') {
-  let id;
-  update((p) => {
-    const start = getState().time;
-    const c = newClip('text', { name: `Sticker ${emoji}`, start, duration: 3, sticker: true });
-    c.text = { ...structuredClone(DEFAULT_TEXT), content: emoji, size: 220, shadow: { ...DEFAULT_TEXT.shadow, on: false } };
-    c.anim.in = { type: 'pop', dur: 0.4 };
-    if (loop !== 'none') c.anim.loop = { ...c.anim.loop, type: loop };
-    c.trackId = ensureTrack(p, 'text', start, start + c.duration);
-    p.clips.push(c); id = c.id;
-  });
-  setState({ selection: [id] });
-}
-
 export function addEffect(type) {
   let id;
   update((p) => {

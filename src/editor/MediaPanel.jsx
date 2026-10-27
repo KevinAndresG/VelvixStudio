@@ -4,18 +4,17 @@ import { fmtTime, mediaUrl, TEXT_PRESETS, EFFECTS, TRANSITIONS, FILTER_PRESETS, 
 import { BADGES, BADGE_THEMES, drawBadge, badgeSize } from '../engine/stickers.js';
 import { cssFilter, drawTransition, EXIT_AS } from '../engine/render.js';
 import { Icon, IconBtn, Select, Slider, Toggle, Modal } from '../ui.jsx';
-import { importDialog, importPaths, addToTimeline, addText, addSticker, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia, removeMedia, unusedMedia } from './actions.js';
+import { importDialog, importPaths, addToTimeline, addText, addBadge, importSticker, addEffect, applyTransition, addFilterLayer, addTTS, patchSilently, reprobeMedia, removeMedia, unusedMedia } from './actions.js';
 import { generateCaptions, WHISPER_MODELS, LANGS, toSRT, fromSRT, restyleCaptions, selectCaptionTrack, translateCaptions, TRANSLATE_LANGS } from './captions.js';
 import { findReplace, getVocab, setVocab, addCaptionEmojis } from './transcript.js';
 import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 import BrandTab from './BrandTab.jsx';
 import VisionTab from './VisionTab.jsx';
-import { EMOJI_CATS, recentEmojis, pushRecentEmoji, searchEmojis } from './emojis.js';
 import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize } from './library.js';
 
 const TABS = [
-  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'sticker', 'Stickers'], ['emojis', 'smile', 'Emojis'],
+  ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'sticker', 'Stickers'],
   ['effects', 'sparkles', 'Efectos'], ['transitions', 'transition', 'Transiciones'], ['filters', 'sliders', 'Filtros'], ['captions', 'cc', 'Subtítulos'], ['transcript', 'edit', 'Transcripción'], ['ai', 'wand', 'IA'], ['brand', 'diamond', 'Marca'],
 ];
 
@@ -70,7 +69,6 @@ export default function MediaPanel() {
         {tab === 'library' && <LibraryTab />}
         {tab === 'text' && <TextTab />}
         {tab === 'stickers' && <StickersTab />}
-        {tab === 'emojis' && <EmojisTab />}
         {tab === 'effects' && <EffectsTab />}
         {tab === 'transitions' && <TransitionsTab />}
         {tab === 'filters' && <FiltersTab />}
@@ -287,14 +285,30 @@ export function presetStyle(t) {
   return s;
 }
 
+// Favorites (transitions, effects, text styles) live in localStorage and are listed first; the ★ toggles them.
+function useFavs(kind) {
+  const [favs, setFavs] = useState(() => { try { return JSON.parse(localStorage.getItem('fav:' + kind) || '[]'); } catch { return []; } });
+  const toggle = (id) => setFavs((f) => {
+    const n = f.includes(id) ? f.filter((x) => x !== id) : [...f, id];
+    try { localStorage.setItem('fav:' + kind, JSON.stringify(n)); } catch { /* private mode */ }
+    return n;
+  });
+  return { favs, toggle, sort: (list, key) => [...list].sort((a, b) => favs.includes(key(b)) - favs.includes(key(a))) };
+}
+function Star({ on, onClick }) {
+  return <i className={`fav-star ${on ? 'on' : ''}`} title={on ? 'Quitar de favoritos' : 'Marcar como favorito'} onClick={(e) => { e.stopPropagation(); onClick(); }}>★</i>;
+}
+
 function TextTab() {
+  const { favs, toggle, sort } = useFavs('text');
   return (
     <div className="panel">
       <button className="btn primary wide" onClick={() => addText()}><Icon name="plus" size={16} /> Agregar texto</button>
       <h5>Estilos de texto</h5>
       <div className="preset-grid">
-        {TEXT_PRESETS.map((p, i) => (
-          <button key={i} className="preset" onClick={() => addText(p.t, p.name === 'Karaoke' ? 'Texto estilo karaoke' : 'Escribe aquí')} title={p.name}>
+        {sort(TEXT_PRESETS, (p) => p.name).map((p) => (
+          <button key={p.name} className="preset" onClick={() => addText(p.t, p.name === 'Karaoke' ? 'Texto estilo karaoke' : 'Escribe aquí')} title={p.name}>
+            <Star on={favs.includes(p.name)} onClick={() => toggle(p.name)} />
             <span style={presetStyle(p.t)}>Aa</span><small>{p.name}</small>
           </button>
         ))}
@@ -340,53 +354,21 @@ function StickersTab() {
       </div>
       <button className="btn wide import-sticker" onClick={importSticker}><Icon name="upload" size={15} /> Importar GIF, WebP o Lottie animado</button>
       <p className="hint">Los GIF/WebP/APNG con transparencia y las animaciones Lottie (.json) se repiten en bucle y conservan el fondo transparente.</p>
-      <p className="hint">También puedes importar PNG transparentes como stickers desde Medios. Los emojis están en su propia pestaña.</p>
-    </div>
-  );
-}
-
-function EmojisTab() {
-  const [cat, setCat] = useState('');
-  const [recent, setRecent] = useState(recentEmojis);
-  const [q, setQ] = useState('');
-  const [loop, setLoop] = useState('none');
-  const add = (e) => { addSticker(e, loop); pushRecentEmoji(e); setRecent(recentEmojis()); };
-  const found = q.trim() ? searchEmojis(q) : null;
-  const cats = cat ? EMOJI_CATS.filter(([k]) => k === cat) : EMOJI_CATS;
-  return (
-    <div className="panel">
-      <input className="input" placeholder="Buscar: dinero, fuego, amor…" value={q} onChange={(e) => setQ(e.target.value)} />
-      <div className="chips wrap">
-        {[['none', 'Sin animar'], ['hop', 'Rebotar'], ['heartbeat', 'Latir'], ['spin', 'Girar'], ['pulse', 'Pulso']].map(([k, n]) => <button key={k} className={loop === k ? 'active' : ''} onClick={() => setLoop(k)}>{n}</button>)}
-      </div>
-      {found && (found.length ? <div className="sticker-grid">{found.map((s) => <button key={s} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div> : <p className="hint">Sin resultados</p>)}
-      {!found && <>
-      <div className="chips wrap">
-        <button className={!cat ? 'active' : ''} onClick={() => setCat('')}>Todos</button>
-        {EMOJI_CATS.map(([k, name]) => <button key={k} className={cat === k ? 'active' : ''} onClick={() => setCat(k)}>{name}</button>)}
-      </div>
-      {!cat && recent.length > 0 && <><h5>Recientes</h5><div className="sticker-grid">{recent.map((s) => <button key={s} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div></>}
-      {cats.map(([k, name, list]) => (
-        <React.Fragment key={k}>
-          <h5>{name}</h5>
-          <div className="sticker-grid">{list.map((s, i) => <button key={s + i} onClick={() => add(s)} title="Agregar emoji">{s}</button>)}</div>
-        </React.Fragment>
-      ))}
-      </>}
-      <p className="hint">Se agregan en el cursor como sticker grande; cámbiale tamaño, animación o posición en el inspector.</p>
+      <p className="hint">También puedes importar PNG transparentes como stickers desde Medios.</p>
     </div>
   );
 }
 
 const FX_ICON = { shake: '〰', zoomPulse: '⊕', flash: '✦', strobe: '◐', glitch: '▚', rgbSplit: '◫', vhs: '▤', oldFilm: '🎞', grain: '░', lightLeak: '☀', letterbox: '▭', mirror: '⇋', kaleido: '✳', blurIn: '◌', vignettePulse: '◉', pixelate: '▦', bw: '◑', heartbeat: '♥', rain: '☂', snow: '❄', sparkles: '✨', scanlines: '≡', split3: '☰', fisheye: '◎', duotone: '◧', neonEdge: '✺' };
 function EffectsTab() {
+  const { favs, toggle, sort } = useFavs('fx');
   return (
     <div className="panel">
       <h5>Efectos de video</h5>
       <p className="hint">Se agregan en el cursor y afectan todo lo que está debajo. Ajusta duración e intensidad en la línea de tiempo.</p>
       <div className="fx-grid">
-        {Object.entries(EFFECTS).map(([k, v]) => (
-          <button key={k} className="fx" onClick={() => addEffect(k)}><span>{FX_ICON[k] || '✦'}</span><small>{v}</small></button>
+        {sort(Object.entries(EFFECTS), ([k]) => k).map(([k, v]) => (
+          <button key={k} className="fx" onClick={() => addEffect(k)}><Star on={favs.includes(k)} onClick={() => toggle(k)} /><span>{FX_ICON[k] || '✦'}</span><small>{v}</small></button>
         ))}
       </div>
     </div>
@@ -426,10 +408,12 @@ function TransThumb({ type, exit, hover }) {
 }
 export function TransGrid({ value, exit, onPick }) {
   const [hover, setHover] = useState(null);
+  const { favs, toggle, sort } = useFavs('trans');
   return (
     <div className="fx-grid">
-      {Object.entries(TRANSITIONS).map(([k, v]) => (
+      {sort(Object.entries(TRANSITIONS), ([k]) => k).map(([k, v]) => (
         <button key={k} data-trans={k} className={`fx trans ${value === k ? 'active' : ''}`} onClick={() => onPick(k)} onMouseEnter={() => setHover(k)} onMouseLeave={() => setHover(null)} title={v}>
+          <Star on={favs.includes(k)} onClick={() => toggle(k)} />
           <TransThumb type={k} exit={exit} hover={hover === k} /><small>{v}</small>
         </button>
       ))}
