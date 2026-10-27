@@ -32,12 +32,36 @@ export const useStore = (sel) => useSyncExternalStore(subscribe, () => sel(state
 // Playhead time for panels that only show it: while playing it ticks at 10 Hz so they don't re-render every frame.
 export const useUiTime = () => useStore((s) => (s.playing ? Math.round(s.time * 10) / 10 : s.time));
 
+// Returns b with every part deep-equal to a's swapped for a's object (arrays of {id} matched by id), so an edit
+// keeps the identity of everything it didn't touch: memoized clips skip re-rendering, undo snapshots share memory.
+export function share(a, b) {
+  if (a === b || !a || !b || typeof a !== 'object' || typeof b !== 'object') return Object.is(a, b) ? a : b;
+  if (Array.isArray(a) !== Array.isArray(b) || ArrayBuffer.isView(b)) return b;
+  let same;
+  if (Array.isArray(b)) {
+    const byId = b.length && b[0] && b[0].id != null ? new Map(a.map((x) => [x && x.id, x])) : null;
+    same = a.length === b.length;
+    for (let i = 0; i < b.length; i++) {
+      const old = byId ? byId.get(b[i] && b[i].id) : a[i];
+      b[i] = share(old, b[i]);
+      if (b[i] !== a[i]) same = false;
+    }
+  } else {
+    const keys = Object.keys(b);
+    same = keys.length === Object.keys(a).length;
+    for (const k of keys) { b[k] = share(a[k], b[k]); if (b[k] !== a[k]) same = false; }
+  }
+  return same ? a : b;
+}
+
 let lastKey = null, lastAt = 0;
 // fn mutates a draft copy. `key` coalesces rapid edits (slider drags) into one undo step.
 export function update(fn, key = null) {
   if (!state.project) return;
-  const draft = structuredClone(state.project);
+  let draft = structuredClone(state.project);
   fn(draft);
+  draft = share(state.project, draft);
+  if (draft === state.project) return; // nothing changed: no undo step, no autosave
   const now = performance.now();
   const coalesce = key && key === lastKey && now - lastAt < 800;
   lastKey = key; lastAt = now;

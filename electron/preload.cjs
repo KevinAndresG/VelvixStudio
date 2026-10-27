@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('api', {
   fileTag: inv('file:tag'),
   paths: inv('app:paths'),
   pathForFile: (f) => webUtils.getPathForFile(f),
+  logError: (msg) => ipcRenderer.send('log:error', String(msg).slice(0, 4000)),
 
   listProjects: inv('projects:list'),
   loadProject: inv('projects:load'),

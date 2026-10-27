@@ -24,6 +24,17 @@ for (const d of [PROJECTS, CACHE, MODELS, BACKUPS, BRAND, LUTS]) fs.mkdirSync(d,
 const SESSION = path.join(DATA, 'session.json');
 const readSession = () => { try { return JSON.parse(fs.readFileSync(SESSION, 'utf8')); } catch { return null; } };
 let crashed = readSession();
+// Error log (%APPDATA%/Velvix Studio/error.log, last ~200 KB): main-process failures no longer kill the app with a dialog.
+const LOG = path.join(DATA, 'error.log');
+function logError(msg) {
+  try {
+    if ((fs.statSync(LOG, { throwIfNoEntry: false }) || { size: 0 }).size > 200000) fs.renameSync(LOG, LOG + '.old');
+    fs.appendFileSync(LOG, `[${new Date().toISOString()}] ${msg}\n`);
+  } catch { /* disk full / read-only: nothing else to do */ }
+}
+process.on('uncaughtException', (e) => logError('main uncaught: ' + (e && e.stack)));
+process.on('unhandledRejection', (e) => logError('main rejection: ' + (e && e.stack || e)));
+ipcMain.on('log:error', (_e, msg) => logError('renderer: ' + msg));
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } },

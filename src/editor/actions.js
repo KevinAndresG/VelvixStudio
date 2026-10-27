@@ -1,4 +1,4 @@
-import { getState, setState, update, toast, setJob } from '../store.js';
+import { getState, setState, update, toast, setJob, share } from '../store.js';
 import { newClip, newTrack, uid, clipEnd, mediaOf, projectDuration, DEFAULT_TEXT, TEXT_GROUPS, clamp, subClip, sourceTime, MAX_SPEED } from '../engine/model.js';
 import { probeAnimated, loadAnimated, parseLottie, loadLottie, animDrawable } from '../engine/animated.js';
 import { BADGES } from '../engine/stickers.js';
@@ -10,9 +10,10 @@ const proj = () => getState().project;
 
 // Mutates project without an undo step (async metadata like thumbnails).
 export function patchSilently(fn) {
-  const p = structuredClone(getState().project);
-  fn(p);
-  setState({ project: p });
+  const old = getState().project, draft = structuredClone(old);
+  fn(draft);
+  const p = share(old, draft);
+  if (p !== old) setState({ project: p });
 }
 
 // ---------- tracks ----------

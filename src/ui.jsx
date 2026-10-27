@@ -38,6 +38,26 @@ export function Icon({ name, size = 18, stroke = 1.8, fill = false, style }) {
   );
 }
 
+// Error boundary: a panel that throws while rendering shows a retry box instead of blanking the whole app.
+export class Safe extends React.Component {
+  state = { error: null };
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error(`[${this.props.name}]`, error, info && info.componentStack); window.api && window.api.logError && window.api.logError(`${this.props.name}: ${error && error.stack}`); }
+  // A new project (an undo, any edit) retries on its own.
+  componentDidUpdate(prev) { if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null }); }
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <div className={`safe-err ${this.props.className || ''}`} role="alert">
+        <b>{this.props.name} tuvo un error</b>
+        <span>{String(this.state.error.message || this.state.error).slice(0, 160)}</span>
+        <span>Deshaz el último cambio (Ctrl+Z) o reintenta.</span>
+        <button className="btn" onClick={() => this.setState({ error: null })}>Reintentar</button>
+      </div>
+    );
+  }
+}
+
 export function IconBtn({ icon, title, onClick, active, disabled, size = 18, className = '' }) {
   return (
     <button className={`icon-btn ${active ? 'active' : ''} ${className}`} title={title} aria-label={title} onClick={onClick} disabled={disabled}>

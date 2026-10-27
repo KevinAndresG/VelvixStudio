@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useStore, getState, setState, undo, redo, update, flushSave, toast } from '../store.js';
 import { projectDuration, ASPECTS, uid, clipEnd } from '../engine/model.js';
-import { Icon, IconBtn, Select, Modal } from '../ui.jsx';
+import { Icon, IconBtn, Select, Modal, Safe } from '../ui.jsx';
 import MediaPanel, { askRemove } from './MediaPanel.jsx';
 import Preview, { snapshotCanvas } from './Preview.jsx';
 import Timeline from './Timeline.jsx';
@@ -141,14 +141,14 @@ export default function Editor() {
         </div>
       </header>
       <div className="workspace" style={{ ...(widths.left && { '--left-w': `${widths.left}px` }), ...(widths.right && { '--right-w': `${widths.right}px` }) }}>
-        <MediaPanel />
+        <Safe resetKey={project} name="Panel de medios" className="left"><MediaPanel /></Safe>
         <Splitter side="left" widths={widths} setWidths={setWidths} />
-        <Preview />
+        <Safe resetKey={project} name="Vista previa" className="preview"><Preview /></Safe>
         <Splitter side="right" widths={widths} setWidths={setWidths} />
-        <Inspector />
+        <Safe resetKey={project} name="Inspector" className="right"><Inspector /></Safe>
       </div>
-      <Timeline />
-      {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+      <Safe resetKey={project} name="Línea de tiempo" className="timeline"><Timeline /></Safe>
+      {exporting && <Safe resetKey={project} name="Exportar"><ExportDialog onClose={() => setExporting(false)} /></Safe>}
       {help && <ShortcutHelp onClose={() => setHelp(false)} />}
       {tpl != null && (
         <Modal title="Guardar como plantilla" onClose={() => setTpl(null)} width={420}>

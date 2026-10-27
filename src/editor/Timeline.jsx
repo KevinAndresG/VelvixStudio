@@ -73,14 +73,15 @@ function FilmStrip({ clip, media, width, height }) {
   return <div className="strip" style={{ height }}>{tiles}</div>;
 }
 
-function Clip({ clip, track, project, zoom, selected, ghost, selKf, onDown, onTrim, onContext, onKf }) {
-  const media = mediaOf(project, clip);
-  const left = (ghost ? ghost.start : clip.start) * zoom, width = Math.max(4, clip.duration * zoom);
+// Memoized: with structural sharing (store.share) an edit re-renders only the clips it changed.
+const Clip = React.memo(function Clip({ clip, track, media, zoom, selected, ghost, selKf, handlers }) {
+  const { onDown, onTrim, onContext, onKf } = handlers;
+  const left = (ghost != null ? ghost : clip.start) * zoom, width = Math.max(4, clip.duration * zoom);
   const h = rowH(track) - 6;
   const kfTimes = [...new Set(Object.values(clip.kf || {}).flat().map((k) => k.t))];
   const label = clip.type === 'text' ? (clip.text.badge ? clip.name : clip.text.content) : clip.type === 'effect' ? (clip.filter ? 'Filtro' : EFFECTS[clip.effect.type]) : clip.name;
   return (
-    <div className={`clip c-${clip.type} ${selected ? 'sel' : ''} ${ghost ? 'dragging' : ''} ${media && media.missing ? 'missing' : ''}`}
+    <div className={`clip c-${clip.type} ${selected ? 'sel' : ''} ${ghost != null ? 'dragging' : ''} ${media && media.missing ? 'missing' : ''}`}
       style={{ left, width, height: h }}
       onPointerDown={(e) => onDown(e, clip)} onContextMenu={(e) => onContext(e, clip)} title={label}>
       {(clip.type === 'video' || clip.type === 'image') && <FilmStrip clip={clip} media={media} width={width} height={h} />}
@@ -115,7 +116,7 @@ function Clip({ clip, track, project, zoom, selected, ghost, selKf, onDown, onTr
       </>}
     </div>
   );
-}
+});
 
 function Ruler({ zoom, width, fps, onSeek }) {
   const steps = [1 / fps, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
@@ -443,11 +444,15 @@ export default function Timeline() {
     }
   };
 
+  // Stable handler object for the memoized clips; each call goes to this render's handler.
+  const handlersRef = useRef(null);
+  const clipHandlers = useMemo(() => ({ onDown: (...a) => handlersRef.current.onClipDown(...a), onTrim: (...a) => handlersRef.current.onTrim(...a), onContext: (...a) => handlersRef.current.onContext(...a), onKf: (...a) => handlersRef.current.onKf(...a) }), []);
   const onContext = (e, clip) => {
     e.preventDefault();
     if (!selection.includes(clip.id)) setState({ selection: [clip.id] });
     setMenu({ x: e.clientX, y: e.clientY, clip });
   };
+  handlersRef.current = { onClipDown, onTrim, onContext, onKf };
 
   const tool = (icon, title, fn, disabled) => <IconBtn icon={icon} title={title} onClick={fn} disabled={disabled} />;
   const selClip = project.clips.find((c) => c.id === selection[0]);
@@ -502,9 +507,9 @@ export default function Timeline() {
               {tracks.map((t, i) => (
                 <div key={t.id} className={`track k-${t.kind} ${t.main ? 'main' : ''} ${t.hidden ? 'hidden' : ''} ${drag && drag.trackId === t.id ? 'drop' : ''}`} style={{ top: trackY[i], height: rowH(t) }}>
                   {project.clips.filter((c) => c.trackId === t.id).map((c) => (
-                    <Clip key={c.id} clip={c} track={t} project={project} zoom={zoom} selected={selection.includes(c.id)}
-                      ghost={drag && drag.ids.includes(c.id) ? { start: Math.max(0, c.start + drag.dt) } : null}
-                      selKf={selKf} onDown={onClipDown} onTrim={onTrim} onContext={onContext} onKf={onKf} />
+                    <Clip key={c.id} clip={c} track={t} media={mediaOf(project, c)} zoom={zoom} selected={selection.includes(c.id)}
+                      ghost={drag && drag.ids.includes(c.id) ? Math.max(0, c.start + drag.dt) : null}
+                      selKf={selKf && selKf.clipId === c.id ? selKf : null} handlers={clipHandlers} />
                   ))}
                 </div>
               ))}

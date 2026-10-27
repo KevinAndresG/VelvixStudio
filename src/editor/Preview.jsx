@@ -36,6 +36,9 @@ export default function Preview() {
   const [guides, setGuides] = useState({ v: false, h: false });
   const [, force] = useState(0);
   const [full, setFull] = useState(false);
+  // Preview resolution (as CapCut's preview quality): fewer pixels to composite on slow PCs; export is unaffected.
+  const [quality, setQuality] = useState(() => { try { return +localStorage.getItem('previewQuality') || 1; } catch { return 1; } });
+  const pickQuality = (q) => { setQuality(q); try { localStorage.setItem('previewQuality', String(q)); } catch { /* ignore */ } };
   useEffect(() => { const f = () => setFull(!!document.fullscreenElement); document.addEventListener('fullscreenchange', f); return () => document.removeEventListener('fullscreenchange', f); }, []);
   const toggleFull = () => (document.fullscreenElement ? document.exitFullscreen() : mainRef.current.requestFullscreen());
   const duration = projectDuration(project);
@@ -57,22 +60,36 @@ export default function Preview() {
     pool.onError = (clip) => toast(`No se puede reproducir "${clip.name}". Usa Importar de nuevo para crear una versión compatible.`, 'error');
     if (window.__velvix) window.__velvix.pool = pool; // E2E hook
     let raf, clock = null, last = {};
+    // One bad frame (a clip whose data is broken) must not stop the loop or flood the log: report each message once.
+    const failed = new Set();
     const tick = () => {
       raf = requestAnimationFrame(tick);
+      try { frameStep(); } catch (e) {
+        const m = String(e && e.message);
+        if (!failed.has(m)) { failed.add(m); console.error(e); window.api.logError && window.api.logError('preview: ' + (e && e.stack)); toast(`Error en la vista previa: ${m.slice(0, 100)}`, 'error'); }
+      }
+    };
+    const frameStep = () => {
       const s = getState(), p = s.project;
       if (!p || s.exporting) return;
       const canvas = (previewCanvas = canvasRef.current); if (!canvas) return;
       const now = performance.now();
       let t = s.time;
       if (s.playing) {
-        if (!clock) clock = { wall: now, t: s.time, held: 0 };
+        // Clock: the audio output's own clock once it runs (what is heard never drifts from the picture, so the
+        // elements' rates aren't nudged all the time), the wall clock until then.
+        const a = pool.actx && pool.actx.state === 'running' ? pool.actx.currentTime * 1000 : null;
+        const clockNow = a ?? now;
+        if (!clock) clock = { wall: clockNow, t: s.time, held: 0, audio: a != null };
+        else if (!clock.audio && a != null) clock = { ...clock, wall: a, t: clock.t + (now - clock.wall) / 1000, audio: true };
+        else if (clock.audio && a == null) clock = { ...clock, wall: now, t: s.time, audio: false }; // audio device lost
         // Buffering: hold the clock (up to 2.5 s, then play on regardless) until the media now on screen can play.
         if (!pool.ready() && (clock.held || (clock.held = now)) && now - clock.held < 2500) {
-          clock.wall = now; clock.t = s.time;
+          clock.wall = clockNow; clock.t = s.time;
           pool.sync(p, t, true, true);
         } else {
           if (pool.ready()) clock.held = 0;
-          t = clock.t + (now - clock.wall) / 1000;
+          t = clock.t + (clockNow - clock.wall) / 1000;
           const end = projectDuration(p);
           if (t >= end) { t = end; clock = null; setState({ time: end, playing: false }); }
           else setState({ time: t });
@@ -98,7 +115,7 @@ export default function Preview() {
   useEffect(() => { if (playing && previewPool) previewPool.resume(); if (playing && time >= duration - 0.01) setState({ time: 0 }); }, [playing]);
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const cw = Math.round(Math.min(project.width, box.w * dpr)), ch = Math.round(cw * (project.height / project.width));
+  const cw = Math.max(2, Math.round(Math.min(project.width, box.w * dpr) * quality)), ch = Math.round(cw * (project.height / project.width));
 
   // ---------- on-canvas selection ----------
   // Bounds of a visual clip at the current time, in stage (CSS) pixels.
@@ -216,6 +233,9 @@ export default function Preview() {
           <IconBtn icon="stepFwd" title="Fotograma siguiente (→)" onClick={() => step(1 / project.fps)} size={16} />
         </div>
         <div className="pb-right">
+          <select className="pq" value={quality} onChange={(e) => pickQuality(+e.target.value)} title="Calidad de la vista previa (no cambia la exportación)">
+            <option value={1}>Completa</option><option value={0.5}>Media</option><option value={0.25}>Baja</option>
+          </select>
           <IconBtn icon="camera" title="Guardar fotograma como imagen" onClick={snapshot} size={16} />
           <IconBtn icon={full ? 'min' : 'max'} title={full ? 'Salir de pantalla completa (Esc)' : 'Pantalla completa'} onClick={toggleFull} size={16} />
         </div>

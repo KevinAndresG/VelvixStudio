@@ -109,7 +109,7 @@ const ff = (...a) => cp.execFileSync(FF, ['-y', '-v', 'error', ...a]);
   await page.click('button[title="Pantalla completa"]');
   await page.waitForTimeout(800);
   const fs1 = await ev(() => ({ el: document.fullscreenElement && document.fullscreenElement.className, w: window.innerWidth }));
-  check('el botón de pantalla completa pone la vista previa en pantalla completa', fs1.el && /stage-wrap/.test(fs1.el), JSON.stringify(fs1));
+  check('el botón de pantalla completa pone la vista previa en pantalla completa', fs1.el && /\bpreview\b/.test(fs1.el), JSON.stringify(fs1));
   await ev(() => document.exitFullscreen());
   await page.waitForTimeout(500);
   check('se sale de pantalla completa', !(await ev(() => document.fullscreenElement)));
