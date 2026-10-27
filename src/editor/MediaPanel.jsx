@@ -11,7 +11,7 @@ import { neuralTTS, NEURAL_LANGS } from './audioai.js';
 import TranscriptTab from './TranscriptPanel.jsx';
 import BrandTab from './BrandTab.jsx';
 import VisionTab from './VisionTab.jsx';
-import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize } from './library.js';
+import { ALL, LIB_CATS, libFile, libDownloaded, addFromLibrary, downloadAll, libSize, autoSfx } from './library.js';
 
 const TABS = [
   ['media', 'film', 'Medios'], ['audio', 'music', 'Audio'], ['library', 'folder', 'Biblioteca'], ['text', 'type', 'Texto'], ['stickers', 'sticker', 'Stickers'],
@@ -329,7 +329,7 @@ function BadgeThumb({ kind, theme }) {
       x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, c.width, c.height);
       const { w, h } = badgeSize(x, tx, 40), k = Math.min(1, (c.width - 12) / w, (c.height - 8) / h);
       x.translate(c.width / 2, c.height / 2); x.scale(k, k);
-      drawBadge(x, tx, (performance.now() - t0) / 1000, 40);
+      drawBadge(x, tx, ((performance.now() - t0) / 1000) % 6, 40, 6);
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
@@ -352,6 +352,7 @@ function StickersTab() {
           <button key={k} data-badge={k} onClick={() => addBadge(k, theme)} title={`Agregar «${v.name}»`}><BadgeThumb kind={k} theme={theme} /><small>{v.name}</small></button>
         ))}
       </div>
+      <button className="btn wide" onClick={autoSfx} title="Pop en cada sticker y whoosh en cada transición">🔊 Sonidos automáticos</button>
       <button className="btn wide import-sticker" onClick={importSticker}><Icon name="upload" size={15} /> Importar GIF, WebP o Lottie animado</button>
       <p className="hint">Los GIF/WebP/APNG con transparencia y las animaciones Lottie (.json) se repiten en bucle y conservan el fondo transparente.</p>
       <p className="hint">También puedes importar PNG transparentes como stickers desde Medios.</p>
@@ -437,6 +438,7 @@ function TransitionsTab() {
       <Slider label="Duración" value={dur} min={0.1} max={3} step={0.1} unit="s" onChange={setDur} />
       <TransGrid exit={side === 'out'} onPick={(k) => applyTransition(k, dur, side)} />
       <button className="btn wide" onClick={() => applyTransition(null, dur, side)}>Quitar transición de {side === 'in' ? 'entrada' : 'salida'}</button>
+      <button className="btn wide" onClick={autoSfx} title="Whoosh en cada transición y pop en cada sticker">🔊 Sonidos automáticos</button>
     </div>
   );
 }

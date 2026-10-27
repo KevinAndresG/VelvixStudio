@@ -615,7 +615,7 @@ function BadgeTab({ clip, edit }) {
           {Object.entries(BADGE_THEMES).map(([k, v]) => <button key={k} data-theme={k} className={b.theme === k ? 'active' : ''} onClick={() => set({ theme: k })}>{v.name}</button>)}
         </div>
         {def.label !== '' && <>
-          <label className="field"><span>Texto</span><input className="input" value={t.content} onChange={(e) => update((p) => { p.clips.find((c) => c.id === clip.id).text.content = e.target.value; }, 'txt-' + clip.id)} /></label>
+          <label className="field"><span>{b.kind === 'reactions' ? 'Emojis' : 'Texto'}</span><input className="input" value={t.content} onChange={(e) => update((p) => { p.clips.find((c) => c.id === clip.id).text.content = e.target.value; }, 'txt-' + clip.id)} /></label>
           {def.label2 && <label className="field"><span>Después del clic</span><input className="input" value={b.label2 ?? def.label2} onChange={(e) => update((p) => { const c = p.clips.find((x) => x.id === clip.id); c.text.badge = { ...c.text.badge, label2: e.target.value }; }, 'lbl2-' + clip.id)} /></label>}
           <label className="field select"><span>Fuente</span>
             <select value={t.font} onChange={(e) => edit((c) => { c.text.font = e.target.value; })} style={{ fontFamily: t.font }}>
@@ -624,7 +624,7 @@ function BadgeTab({ clip, edit }) {
           </label>
         </>}
         <Slider label="Tamaño" value={t.size} min={20} max={300} onChange={(v) => edit((c) => { c.text.size = v; }, 'size')} />
-        <p className="hint">Se anima en bucle (cada 3 s){def.click ? ': un cursor pulsa el botón y cambia a «' + (b.label2 ?? def.label2 ?? '') + '»' : ''}. Muévelo y escálalo en el visor.</p>
+        <p className="hint">{b.kind === 'progress' ? 'Se llena durante la duración del clip' : b.kind === 'countdown' ? 'Cuenta los segundos que quedan del clip' : b.kind === 'reactions' ? 'Los emojis suben flotando sin parar' : 'Se anima en bucle (cada 3 s)'}{def.click ? ': un cursor pulsa el botón y cambia a «' + (b.label2 ?? def.label2 ?? '') + '»' : ''}. Muévelo y escálalo en el visor.</p>
       </Section>
     </>
   );

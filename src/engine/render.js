@@ -287,7 +287,7 @@ export function drawText(ctx, clip, t, W, H) {
   x.scale(s * (tr.flipH ? -1 : 1), s * (tr.flipV ? -1 : 1));
   x.globalAlpha = opacity;
   if (st.blur > 0) x.filter = `blur(${((st.blur * W) / 1920).toFixed(1)}px)`;
-  if (tx.badge) { drawBadge(x, tx, local, tx.size * (Math.min(W, H) / 1080)); x.restore(); return; }
+  if (tx.badge) { drawBadge(x, tx, local, tx.size * (Math.min(W, H) / 1080), clip.duration); x.restore(); return; }
   const M = textModel(x, clip, t, W, H, tr.scale * st.scale), { k, size, content, lh, lines, bw, bh, arc } = M;
   x.textBaseline = 'middle';
 

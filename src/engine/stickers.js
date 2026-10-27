@@ -22,6 +22,10 @@ export const BADGES = {
   bell: { name: 'Campanita', icon: 'bell', label: 'ACTIVA LA CAMPANITA', theme: 'youtube' },
   save: { name: 'Guárdalo', icon: 'bookmark', label: 'GUÁRDALO', theme: 'dark' },
   link: { name: 'Link en la bio', icon: 'down', label: 'LINK EN LA BIO', theme: 'light' },
+  // Special stickers drawn by SPECIAL below; `place` = default position (x, y) and duration ('rest' = to the end).
+  reactions: { name: 'Reacciones', label: '❤️😍👏🔥😂', theme: 'instagram', place: { x: 0.36, y: 0.1, dur: 6 } },
+  progress: { name: 'Barra de progreso', label: '', theme: 'youtube', place: { x: 0, y: 0.46, dur: 'rest' } },
+  countdown: { name: 'Cuenta regresiva', label: '', theme: 'dark', place: { x: 0, y: 0, dur: 3 } },
 };
 
 const P = 3; // loop period (s)
@@ -100,11 +104,59 @@ function layout(x, tx, u) {
   const w = label ? h * 0.3 + icon + h * 0.22 + lw + h * 0.42 : h * 1.6;
   return { def, label, label2, lw, h, w: label ? w : h * 1.6, icon };
 }
-export function badgeSize(x, tx, u) { x.save(); const l = layout(x, tx, u); x.restore(); return { w: l.w, h: l.label ? l.h : l.h * 1.6 }; }
+const fillOf = (x, th, x0, y0, x1, y1) => {
+  if (!th.grad) return th.bg;
+  const g = x.createLinearGradient(x0, y0, x1, y1); th.grad.forEach((c, i) => g.addColorStop(i / (th.grad.length - 1), c)); return g;
+};
+// Each: [size(u) → {w, h}, draw(x, tx, th, t, u, dur)], centered at (0, 0). dur = clip duration (s).
+const SPECIAL = {
+  // Live-stream style reactions: the clip's emojis float up from the bottom, wobbling and fading, one every 0.22 s.
+  reactions: [(u) => ({ w: u * 3, h: u * 7 }), (x, tx, th, t, u) => {
+    const list = [...new Intl.Segmenter().segment(tx.content || '❤️')].map((g) => g.segment).filter((g) => g.trim());
+    const life = 2.4, every = 0.22, H = u * 7;
+    x.textAlign = 'center'; x.textBaseline = 'middle';
+    for (let i = Math.max(0, Math.floor((t - life) / every)); i * every <= t; i++) {
+      const q = (t - i * every) / life, r = Math.sin(i * 12.9898) * 43758.5453 % 1; // per-particle pseudo-random
+      if (q < 0 || q >= 1) continue;
+      x.save();
+      x.globalAlpha *= Math.min(1, q * 8) * (1 - q * q);
+      x.translate(Math.sin(q * 5 + i) * u * 0.5 + r * u * 0.6, H / 2 - u * 0.5 - q * (H - u));
+      const k = (0.7 + Math.abs(r) * 0.5) * Math.min(1, 0.4 + q * 4);
+      x.font = `${u * k}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+      x.fillText(list[i % list.length], 0, 0);
+      x.restore();
+    }
+  }],
+  // Video progress bar: fills across the clip's duration, with a glowing head.
+  progress: [(u) => ({ w: u * 16, h: u * 0.6 }), (x, tx, th, t, u, dur) => {
+    const w = u * 16, h = u * 0.3, p = Math.min(1, Math.max(0, t / dur));
+    x.beginPath(); x.roundRect(-w / 2, -h / 2, w, h, h / 2); x.fillStyle = '#ffffff40'; x.fill();
+    if (p > 0) { x.beginPath(); x.roundRect(-w / 2, -h / 2, Math.max(h, w * p), h, h / 2); x.fillStyle = fillOf(x, th, -w / 2, 0, w / 2, 0); x.fill(); }
+    x.shadowColor = '#00000088'; x.shadowBlur = h; x.beginPath(); x.arc(-w / 2 + Math.max(h / 2, w * p - h / 2), 0, h, 0, Math.PI * 2); x.fillStyle = '#ffffff'; x.fill();
+  }],
+  // Countdown: whole seconds left (dur → 1), each number pops in while a ring empties around it.
+  countdown: [(u) => ({ w: u * 3, h: u * 3 }), (x, tx, th, t, u, dur) => {
+    const left = Math.max(0, dur - t), n = Math.max(1, Math.ceil(left - 1e-6)), f = left - (n - 1), R = u * 1.4; // f: 1 → 0 within each second
+    x.shadowColor = '#00000066'; x.shadowBlur = u * 0.3;
+    x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = fillOf(x, th, -R, -R, R, R); x.fill(); x.shadowBlur = 0;
+    x.beginPath(); x.arc(0, 0, R * 0.88, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * f); x.strokeStyle = th.fg; x.lineWidth = u * 0.14; x.lineCap = 'round'; x.stroke();
+    const pop = 1 + 0.35 * Math.max(0, (f - 0.8) / 0.2);
+    x.scale(pop, pop); x.fillStyle = th.fg; x.textAlign = 'center'; x.textBaseline = 'middle';
+    x.font = `${tx.italic ? 'italic ' : ''}800 ${u * 1.5}px "${tx.font}", "Segoe UI", sans-serif`;
+    x.fillText(String(n), 0, u * 0.08);
+  }],
+};
 
-// Draws the sticker centered at (0, 0) of the current transform; u = text size in canvas pixels; t = clip-local seconds.
-export function drawBadge(x, tx, t, u) {
-  const b = tx.badge, L = layout(x, tx, u), th = BADGE_THEMES[b.theme] || BADGE_THEMES[L.def.theme];
+export function badgeSize(x, tx, u) {
+  if (SPECIAL[tx.badge.kind]) return SPECIAL[tx.badge.kind][0](u);
+  x.save(); const l = layout(x, tx, u); x.restore(); return { w: l.w, h: l.label ? l.h : l.h * 1.6 }; }
+
+// Draws the sticker centered at (0, 0) of the current transform; u = text size in canvas pixels; t = clip-local seconds;
+// dur = clip duration (progress bar, countdown).
+export function drawBadge(x, tx, t, u, dur = P) {
+  const b = tx.badge;
+  if (SPECIAL[b.kind]) { x.save(); SPECIAL[b.kind][1](x, tx, BADGE_THEMES[b.theme] || BADGE_THEMES[BADGES[b.kind].theme], t, u, dur); x.restore(); return; }
+  const L = layout(x, tx, u), th = BADGE_THEMES[b.theme] || BADGE_THEMES[L.def.theme];
   const { h, w, icon, def } = L, ph = (t % P + P) % P;
   // Click cycle: the cursor glides in, presses at 1.0 s and leaves; the button stays "done" until the loop restarts.
   const press = def.click && ph > 0.95 && ph < 1.12, done = def.click && ph >= 1.05 && ph < P - 0.15;

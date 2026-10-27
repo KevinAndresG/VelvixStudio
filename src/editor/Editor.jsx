@@ -7,7 +7,7 @@ import Preview, { snapshotCanvas } from './Preview.jsx';
 import Timeline from './Timeline.jsx';
 import Inspector from './Inspector.jsx';
 import ExportDialog from './ExportDialog.jsx';
-import { splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, addMarker, packMain, ensureTrack } from './actions.js';
+import { splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, addMarker, packMain, ensureTrack, copyAttrs, pasteAttrs } from './actions.js';
 
 let clipboard = [];
 
@@ -36,6 +36,8 @@ function onKey(e) {
   else if (k === 'w' && !ctrl && !e.altKey) { e.preventDefault(); trimAtPlayhead('right'); }
   else if (k === 'delete' || k === 'backspace') { e.preventDefault(); if (s.mediaSel.length) askRemove(s.mediaSel); else if (!deleteKeyframe()) deleteSelected(); }
   else if (ctrl && k === 'd') { e.preventDefault(); duplicateSelected(); }
+  else if (ctrl && e.altKey && k === 'c') { e.preventDefault(); copyAttrs(); }
+  else if (ctrl && e.altKey && k === 'v') { e.preventDefault(); pasteAttrs(); }
   else if (ctrl && k === 'c') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); }
   else if (ctrl && k === 'x') { clipboard = s.project.clips.filter((c) => s.selection.includes(c.id)).map((c) => structuredClone(c)); deleteSelected(); }
   else if (ctrl && k === 'v' && clipboard.length) {
@@ -220,7 +222,7 @@ function AspectPicker({ value, onChange }) {
 function ShortcutHelp({ onClose }) {
   const rows = [
     ['Espacio', 'Reproducir / pausar'], ['S  o  Ctrl+B', 'Dividir en el cursor'], ['Q / W', 'Borrar a la izquierda / derecha del cursor'], ['Supr', 'Eliminar selección (clips o medios)'],
-    ['Ctrl+Z / Ctrl+Y', 'Deshacer / rehacer'], ['Ctrl+C / X / V', 'Copiar / cortar / pegar'], ['Ctrl+D', 'Duplicar'],
+    ['Ctrl+Z / Ctrl+Y', 'Deshacer / rehacer'], ['Ctrl+C / X / V', 'Copiar / cortar / pegar'], ['Ctrl+D', 'Duplicar'], ['Ctrl+Alt+C / V', 'Copiar / pegar atributos'],
     ['← / →', 'Fotograma anterior / siguiente'], ['Shift+← / →', '±1 segundo'], ['J / L', '±5 segundos'], ['Inicio / Fin', 'Ir al inicio / final'],
     ['Ctrl + / Ctrl −', 'Zoom de la línea de tiempo'], ['M', 'Agregar marcador'], ['Ctrl+A', 'Seleccionar todo'], ['Ctrl+E', 'Exportar'],
     ['Alt + arrastrar', 'Mover sin ajuste magnético'], ['Rueda + Ctrl', 'Zoom en la línea de tiempo'],

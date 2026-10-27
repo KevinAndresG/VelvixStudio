@@ -457,9 +457,10 @@ export function addBadge(kind, theme) {
   let id;
   update((p) => {
     const start = getState().time;
-    const c = newClip('text', { name: `Sticker ${def.name}`, start, duration: 4, sticker: true });
+    const pl = def.place || { x: 0, y: 0.3, dur: 4 }, duration = pl.dur === 'rest' ? Math.max(3, projectDuration(p) - start) : pl.dur;
+    const c = newClip('text', { name: `Sticker ${def.name}`, start, duration, sticker: true });
     c.text = { ...structuredClone(DEFAULT_TEXT), content: def.label, size: 80, badge: { kind, theme: theme || def.theme }, shadow: { ...DEFAULT_TEXT.shadow, on: false } };
-    c.transform.y = 0.3;
+    c.transform.x = pl.x; c.transform.y = pl.y;
     c.anim.in = { type: 'pop', dur: 0.4 };
     c.anim.out = { type: 'fade', dur: 0.3 };
     c.trackId = ensureTrack(p, 'text', start, start + c.duration);
@@ -474,4 +475,29 @@ export async function importSticker() {
   if (!f) return;
   const [m] = await importPaths([f]);
   if (m) addToTimeline(m, { at: getState().time });
+}
+
+// Copy / paste a clip's look and motion (not its content, timing or speed) onto other clips: Ctrl+Alt+C / Ctrl+Alt+V.
+const ATTRS = ['transform', 'kf', 'anim', 'blend', 'fit', 'crop', 'filter', 'mask', 'chroma', 'effects', 'transition', 'transitionOut', 'volume', 'fadeIn', 'fadeOut', 'audioFx', 'effect'];
+let copiedAttrs = null;
+export function copyAttrs() {
+  const c = proj().clips.find((x) => sel().includes(x.id));
+  if (!c) return toast('Selecciona un clip');
+  copiedAttrs = structuredClone(Object.fromEntries(ATTRS.filter((k) => c[k] != null).map((k) => [k, c[k]])));
+  if (c.type === 'text' && !c.text.badge && !c.sticker) { const { content, ...style } = c.text; copiedAttrs.text = structuredClone(style); }
+  toast('Atributos copiados');
+}
+export function pasteAttrs() {
+  if (!copiedAttrs) return toast('Copia atributos primero (Ctrl+Alt+C)');
+  const ids = sel();
+  update((p) => {
+    for (const c of p.clips) if (ids.includes(c.id)) {
+      const visual = c.type === 'video' || c.type === 'image';
+      for (const [k, v] of Object.entries(copiedAttrs)) {
+        if (k === 'text') { if (c.type === 'text' && !c.text.badge && !c.sticker) c.text = { ...structuredClone(v), content: c.text.content }; }
+        else if (k in c ? c[k] != null || visual : visual && k === 'transitionOut') c[k] = structuredClone(v);
+      }
+    }
+  });
+  toast('Atributos pegados');
 }

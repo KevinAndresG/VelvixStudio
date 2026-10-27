@@ -3,7 +3,7 @@ import { useStore, getState, setState, update, toast } from '../store.js';
 import { projectDuration, clipEnd, mediaOf, fmtTime, mediaUrl, EFFECTS, TRANSITIONS, clamp, sourceTime, subClip, speedAt, newTrack } from '../engine/model.js';
 import { Icon, IconBtn } from '../ui.jsx';
 import {
-  splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, freezeFrame, toggleReverse, detachAudio, addMarker,
+  splitAtPlayhead, trimAtPlayhead, deleteSelected, duplicateSelected, copyAttrs, pasteAttrs, freezeFrame, toggleReverse, detachAudio, addMarker,
   packMain, ensureTrack, cleanupTracks, addToTimeline, importPaths, trackName,
 } from './actions.js';
 
@@ -530,6 +530,8 @@ export default function Timeline() {
           <button onClick={() => trimAtPlayhead('left')}>Borrar a la izquierda <kbd>Q</kbd></button>
           <button onClick={() => trimAtPlayhead('right')}>Borrar a la derecha <kbd>W</kbd></button>
           <button onClick={duplicateSelected}>Duplicar <kbd>Ctrl+D</kbd></button>
+          <button onClick={copyAttrs}>Copiar atributos <kbd>Ctrl+Alt+C</kbd></button>
+          <button onClick={pasteAttrs}>Pegar atributos <kbd>Ctrl+Alt+V</kbd></button>
           {menu.clip.type === 'video' && <button onClick={detachAudio}>Separar audio</button>}
           {menu.clip.type === 'video' && <button onClick={toggleReverse}>{menu.clip.reverse ? 'Quitar inversión' : 'Invertir'}</button>}
           {menu.clip.type === 'video' && <button onClick={freezeFrame}>Congelar fotograma</button>}

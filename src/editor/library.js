@@ -2,9 +2,9 @@
 // - recorded music and effects from Wikimedia Commons, each file checked as "CC0" there (author and page shown);
 //   downloaded once on demand to %APPDATA%/Velvix Studio/library, then usable offline;
 // - effects synthesized here (whoosh, pop, riser…): our own, so CC0 too, generated offline in a moment.
-import { getState, setJob, toast } from '../store.js';
-import { uid } from '../engine/model.js';
-import { importPaths, addToTimeline } from './actions.js';
+import { getState, setJob, toast, update } from '../store.js';
+import { uid, newClip } from '../engine/model.js';
+import { importPaths, addToTimeline, ensureTrack } from './actions.js';
 
 const api = window.api;
 export const LIB_CATS = {
@@ -156,4 +156,29 @@ export async function downloadAll(kind) {
   setJob(jobId, null);
   toast(failed ? `${failed} archivos no se pudieron descargar` : `Biblioteca descargada (${todo.length} archivos)`, failed ? 'error' : 'info');
   return todo.length - failed;
+}
+
+// Automatic SFX (#11): a whoosh centered on every entry/exit transition and a pop where each sticker appears, in one
+// undo step. Running it again skips the hits that already have their sound.
+export async function autoSfx() {
+  const hits = [];
+  for (const c of getState().project.clips) {
+    if (c.transition) hits.push(['whoosh', c.start + c.transition.duration / 2 - 0.4]);
+    if (c.transitionOut) hits.push(['whoosh', c.start + c.duration - c.transitionOut.duration / 2 - 0.4]);
+    if (c.sticker) hits.push(['pop', c.start]);
+  }
+  if (!hits.length) return toast('No hay transiciones ni stickers');
+  const media = {};
+  for (const k of new Set(hits.map((h) => h[0]))) [media[k]] = await importPaths([await libFile(SYNTH_LIST.find((x) => x.synth === k))]);
+  let n = 0;
+  update((p) => {
+    for (const [k, at] of hits) {
+      const m = media[k], start = Math.max(0, at);
+      if (!m || p.clips.some((c) => c.mediaId === m.id && Math.abs(c.start - start) < 0.05)) continue;
+      const c = newClip('audio', { mediaId: m.id, name: m.name, start, duration: m.duration });
+      c.trackId = ensureTrack(p, 'audio', start, start + c.duration);
+      p.clips.push(c); n++;
+    }
+  });
+  toast(n ? `${n} sonidos agregados` : 'Los sonidos ya estaban');
 }
