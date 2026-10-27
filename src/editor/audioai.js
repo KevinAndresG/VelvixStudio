@@ -2,6 +2,7 @@
 // Models run in the Whisper worker; ducking and "Mejorar voz" live in the ffmpeg chain (main.cjs) and sources.js.
 import { getState, update, toast, setJob } from '../store.js';
 import { uid, clipEnd, mediaOf, newClip, mediaUrl, subClip } from '../engine/model.js';
+import { BEAT_TEMPLATES, beatSlots, slotLook } from '../engine/templates.js';
 import { audioSegments } from '../engine/sources.js';
 import { makeFFT, hann } from '../engine/fft.js';
 import { getWorker, exclusive, resetWorker } from './captions.js';
@@ -170,6 +171,32 @@ export function cutToBeat(every = 1) {
   });
   toast(n ? `${n} clips cortados al compás` : 'Los clips ya terminan en un beat');
   return n;
+}
+
+// Beat template: the song's beats (detected if needed) become slots, filled in order with the project's
+// photos/videos (or `mediaIds`). Replaces the main track; one undo step.
+export async function fillBeatTemplate(tplId, songClipId, mediaIds = null) {
+  const tpl = BEAT_TEMPLATES[tplId], p = getState().project, song = p.clips.find((c) => c.id === songClipId);
+  const media = (mediaIds ? mediaIds.map((id) => p.media.find((m) => m.id === id)) : p.media).filter((m) => m && (m.type === 'image' || m.type === 'video'));
+  if (!song) return toast('Selecciona la canción'), 0;
+  if (!media.length) return toast('Importa primero fotos o videos para los huecos'), 0;
+  let beats = (p.markers || []).filter((m) => m.beat && m.clip === songClipId).map((m) => m.t).sort((a, b) => a - b);
+  if (!beats.length) beats = await detectBeats(songClipId);
+  if (beats.length < 2) return 0;
+  const slots = beatSlots(tpl, beats, clipEnd(song));
+  update((d) => {
+    const m = mainTrack(d);
+    d.clips = d.clips.filter((c) => c.trackId !== m.id);
+    slots.forEach((s, i) => {
+      const md = media[i % media.length];
+      const c = newClip(md.type, { mediaId: md.id, name: md.name, trackId: m.id, start: s.start, duration: s.duration, fit: 'fill' });
+      if (md.type === 'video') { c.volume = 0; c.in = md.duration > s.duration ? Math.min(md.duration - s.duration, (md.duration - s.duration) / 2) : 0; }
+      slotLook(c, tpl, i === 0);
+      d.clips.push(c);
+    });
+  });
+  toast(`${tpl.name}: ${slots.length} huecos con ${media.length} medios`);
+  return slots.length;
 }
 
 // ---------- #9b neural TTS ----------

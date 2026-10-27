@@ -9,7 +9,8 @@ import { Icon, IconBtn, Slider, Toggle, Select, Color, Section, Tabs } from '../
 import { setSpeed, setCurve, toggleReverse, detachAudio, applyToAll, patchSilently, addTTS } from './actions.js';
 import { presetStyle, TransGrid } from './MediaPanel.jsx';
 import { transIn, transOut } from '../engine/render.js';
-import { isolateVoice, detectBeats, cutToBeat } from './audioai.js';
+import { isolateVoice, detectBeats, cutToBeat, fillBeatTemplate } from './audioai.js';
+import { BEAT_TEMPLATES } from '../engine/templates.js';
 import ColorTab from './ColorTab.jsx';
 import { BADGES, BADGE_THEMES } from '../engine/stickers.js';
 import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
@@ -459,6 +460,7 @@ function AudioTab({ clip, edit, media }) {
     } catch (e) { toast('No se pudo aplicar el efecto: ' + e.message, 'error'); }
   };
   const [every, setEvery] = useState('1');
+  const [tpl, setTpl] = useState('pulse');
   const beats = useStore((s) => (s.project.markers || []).filter((m) => m.beat && m.clip === clip.id).length);
   return (
     <>
@@ -485,6 +487,11 @@ function AudioTab({ clip, edit, media }) {
         <button className="btn wide beat-detect" onClick={() => detectBeats(clip.id)}><Icon name="music" size={15} /> Detectar ritmo{beats ? ` (${beats} beats)` : ''}</button>
         <Select label="Cortar cada" value={every} options={{ 1: '1 beat', 2: '2 beats', 4: '4 beats (compás)' }} onChange={setEvery} />
         <button className="btn wide beat-cut" disabled={!beats} onClick={() => cutToBeat(+every)}>Cortar al compás</button>
+      </Section>
+      <Section title="Plantilla al ritmo">
+        <Select label="Plantilla" value={tpl} options={Object.fromEntries(Object.entries(BEAT_TEMPLATES).map(([k, t]) => [k, t.name]))} onChange={setTpl} />
+        <p className="hint">{BEAT_TEMPLATES[tpl].desc}. Los huecos se llenan con las fotos y videos del proyecto, en orden.</p>
+        <button className="btn wide beat-template" onClick={() => fillBeatTemplate(tpl, clip.id)}><Icon name="wand" size={15} /> Llenar huecos al ritmo</button>
       </Section>
       <Section title="Cambiador de voz">
         <div className="voice-grid">

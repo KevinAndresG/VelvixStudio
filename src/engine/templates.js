@@ -92,3 +92,37 @@ export function fromTemplate(tpl, name) {
   p.markers = (src.markers || []).map((m) => ({ ...m, id: uid() }));
   return p;
 }
+
+// Templates with slots, synced to a song: each slot lasts `beats[i]` beats (the last value repeats) and the
+// chosen photos/videos fill the slots in order (cycling when there are fewer than slots).
+// `look`: per-slot treatment — transition into the slot and a scale move ('punch' on the beat, 'ken' slow push).
+export const BEAT_TEMPLATES = {
+  pulse: { name: 'Cortes al pulso', desc: 'Un cambio por beat, golpe de zoom', beats: [1], look: { move: 'punch' } },
+  smooth: { name: 'Presentación suave', desc: 'Cada 2 beats, disolver y acercamiento lento', beats: [2], look: { transition: 'fade', move: 'ken' } },
+  build: { name: 'Lento a rápido', desc: 'Compases largos que se aceleran hasta 1 beat', beats: [4, 4, 2, 2, 2, 2, 1], look: { transition: 'zoomIn', move: 'punch' } },
+  bars: { name: 'Por compás', desc: 'Cada 4 beats, barrido rápido', beats: [4], look: { transition: 'whip', move: 'ken' } },
+};
+
+// Slot times [{ start, duration }] cut on the given beat times, from 0 to `end`.
+export function beatSlots(tpl, beats, end) {
+  const out = [];
+  for (let i = 0, k = 0; i < beats.length - 1; k++) {
+    const j = Math.min(beats.length - 1, i + tpl.beats[Math.min(k, tpl.beats.length - 1)]);
+    out.push({ start: beats[i], duration: beats[j] - beats[i] });
+    i = j;
+  }
+  const last = beats[beats.length - 1];
+  if (beats.length && end - last > 0.3) out.push({ start: last, duration: end - last });
+  // The main track starts at 0 (magnet): the first slot also covers the intro before the first beat.
+  if (out.length) { out[0].duration += out[0].start; out[0].start = 0; }
+  return out;
+}
+
+// Applies the template look to a slot's clip.
+export function slotLook(c, tpl, first) {
+  const { transition, move } = tpl.look;
+  if (transition && !first) c.transition = { type: transition, duration: Math.min(0.4, c.duration / 3) };
+  const s = c.transform.scale;
+  if (move === 'punch') c.kf.scale = [{ t: 0, v: s * 1.12, ease: 'out' }, { t: Math.min(0.3, c.duration / 2), v: s, ease: 'inOut' }];
+  if (move === 'ken') c.kf.scale = [{ t: 0, v: s, ease: 'linear' }, { t: c.duration, v: s * 1.08, ease: 'linear' }];
+}
