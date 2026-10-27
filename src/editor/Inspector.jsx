@@ -50,6 +50,10 @@ function ProjectPanel({ project }) {
         {bg.type === 'blur' && <Slider label="Desenfoque" value={bg.blur ?? 40} min={5} max={100} onChange={(v) => set('blur', v)} />}
         <p className="hint">El fondo se ve cuando un clip de la pista principal no llena el formato.</p>
       </Section>
+      <Section title="Movimiento">
+        <Toggle label="Desenfoque de movimiento" value={!!project.motionBlur} onChange={(v) => update((p) => { p.motionBlur = v; })} />
+        <p className="hint">Estela suave en transiciones que se mueven y en clips con keyframes o animaciones rápidas. Más lento de exportar.</p>
+      </Section>
       <Section title="Información">
         <dl className="info">
           <dt>Resolución</dt><dd>{project.width}×{project.height}</dd>
@@ -617,6 +621,9 @@ function BadgeTab({ clip, edit }) {
         {def.label !== '' && <>
           <label className="field"><span>{b.kind === 'reactions' ? 'Emojis' : 'Texto'}</span><input className="input" value={t.content} onChange={(e) => update((p) => { p.clips.find((c) => c.id === clip.id).text.content = e.target.value; }, 'txt-' + clip.id)} /></label>
           {def.label2 && <label className="field"><span>Después del clic</span><input className="input" value={b.label2 ?? def.label2} onChange={(e) => update((p) => { const c = p.clips.find((x) => x.id === clip.id); c.text.badge = { ...c.text.badge, label2: e.target.value }; }, 'lbl2-' + clip.id)} /></label>}
+          {(b.kind === 'tweet' || b.kind === 'bubble') && ['who', 'handle'].map((k) => (
+            <label key={k} className="field"><span>{k === 'who' ? 'Nombre' : 'Usuario'}</span><input className="input" value={b[k] ?? ''} placeholder={k === 'who' ? 'Tu nombre' : '@usuario'} onChange={(e) => update((p) => { const c = p.clips.find((x) => x.id === clip.id); c.text.badge = { ...c.text.badge, [k]: e.target.value }; }, k + '-' + clip.id)} /></label>
+          ))}
           <label className="field select"><span>Fuente</span>
             <select value={t.font} onChange={(e) => edit((c) => { c.text.font = e.target.value; })} style={{ fontFamily: t.font }}>
               {fonts.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}

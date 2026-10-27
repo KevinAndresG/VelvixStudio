@@ -26,6 +26,9 @@ export const BADGES = {
   reactions: { name: 'Reacciones', label: '❤️😍👏🔥😂', theme: 'instagram', place: { x: 0.36, y: 0.1, dur: 6 } },
   progress: { name: 'Barra de progreso', label: '', theme: 'youtube', place: { x: 0, y: 0.46, dur: 'rest' } },
   countdown: { name: 'Cuenta regresiva', label: '', theme: 'dark', place: { x: 0, y: 0, dur: 3 } },
+  // `badge.who` / `badge.handle`: author shown on the card / bubble.
+  tweet: { name: 'Tarjeta tweet', label: 'Nadie habla de este truco y cambia todo 🔥', theme: 'light', place: { x: 0, y: -0.15, dur: 5 } },
+  bubble: { name: 'Burbuja de comentario', label: '¿Cómo hiciste eso? 😮', theme: 'light', place: { x: -0.22, y: -0.28, dur: 4 } },
 };
 
 const P = 3; // loop period (s)
@@ -108,10 +111,70 @@ const fillOf = (x, th, x0, y0, x1, y1) => {
   if (!th.grad) return th.bg;
   const g = x.createLinearGradient(x0, y0, x1, y1); th.grad.forEach((c, i) => g.addColorStop(i / (th.grad.length - 1), c)); return g;
 };
-// Each: [size(u) → {w, h}, draw(x, tx, th, t, u, dur)], centered at (0, 0). dur = clip duration (s).
+// Greedy word wrap to maxW with the current font.
+function wrap(x, text, maxW) {
+  const lines = [];
+  for (const para of String(text).split(/\n/)) {
+    let line = '';
+    for (const w of para.split(' ')) { const t = line ? line + ' ' + w : w; if (line && x.measureText(t).width > maxW) { lines.push(line); line = w; } else line = t; }
+    lines.push(line);
+  }
+  return lines;
+}
+const font = (tx, weight, px) => `${tx.italic ? 'italic ' : ''}${weight} ${px}px "${tx.font}", "Segoe UI", "Segoe UI Emoji", sans-serif`;
+const who = (tx) => tx.badge.who || 'Tu nombre', handle = (tx) => '@' + String(tx.badge.handle || 'usuario').replace(/^@/, '');
+// Tweet card / comment bubble geometry (shared by size and draw).
+function cardLayout(x, tx, u, kind) {
+  x.font = font(tx, kind === 'tweet' ? 500 : 700, u * (kind === 'tweet' ? 0.55 : 0.5));
+  if (kind === 'tweet') {
+    const w = u * 13, lines = wrap(x, tx.content || '', w - u * 1.2);
+    return { w, h: u * (0.6 + 1.2 + 0.35 + 0.6) + lines.length * u * 0.72 + u * 0.5, lines };
+  }
+  const lines = wrap(x, tx.content || '', u * 10), tw = Math.max(...lines.map((l) => x.measureText(l).width));
+  x.font = font(tx, 500, u * 0.36); const hw = x.measureText('Respuesta a ' + handle(tx)).width;
+  return { w: Math.max(tw, hw) + u * 0.9, h: u * (0.45 + 0.5) + lines.length * u * 0.65 + u * 0.35, lines };
+}
+function avatar(x, tx, cx, cy, r) {
+  const g = x.createLinearGradient(cx - r, cy - r, cx + r, cy + r); g.addColorStop(0, '#8a5cff'); g.addColorStop(1, '#ff6ab0');
+  x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fillStyle = g; x.fill();
+  x.fillStyle = '#fff'; x.font = font(tx, 800, r); x.textAlign = 'center'; x.fillText(who(tx).trim().charAt(0).toUpperCase() || '?', cx, cy + r * 0.05); x.textAlign = 'left';
+}
+
+// Each: [size(x, tx, u) → {w, h}, draw(x, tx, th, t, u, dur)], centered at (0, 0). dur = clip duration (s).
 const SPECIAL = {
+  tweet: [(x, tx, u) => cardLayout(x, tx, u, 'tweet'), (x, tx, th, t, u) => {
+    const { w, h, lines } = cardLayout(x, tx, u, 'tweet'), L = -w / 2, T = -h / 2, pad = u * 0.6, sub = '#71767b';
+    x.shadowColor = '#00000055'; x.shadowBlur = u * 0.5; x.shadowOffsetY = u * 0.1;
+    x.beginPath(); x.roundRect(L, T, w, h, u * 0.45); x.fillStyle = th.bg || '#fff'; x.fill();
+    x.shadowColor = 'transparent';
+    x.textBaseline = 'middle';
+    avatar(x, tx, L + pad + u * 0.6, T + pad + u * 0.6, u * 0.6);
+    x.fillStyle = th.fg; x.font = font(tx, 800, u * 0.5); x.fillText(who(tx), L + pad + u * 1.45, T + pad + u * 0.35);
+    const nw = x.measureText(who(tx)).width, vx = L + pad + u * 1.45 + nw + u * 0.32, vy = T + pad + u * 0.35;
+    x.beginPath(); x.arc(vx, vy, u * 0.2, 0, Math.PI * 2); x.fillStyle = '#1d9bf0'; x.fill();
+    x.beginPath(); x.moveTo(vx - u * 0.09, vy); x.lineTo(vx - u * 0.02, vy + u * 0.08); x.lineTo(vx + u * 0.1, vy - u * 0.07); x.strokeStyle = '#fff'; x.lineWidth = u * 0.05; x.stroke();
+    x.fillStyle = sub; x.font = font(tx, 500, u * 0.42); x.fillText(handle(tx), L + pad + u * 1.45, T + pad + u * 0.88);
+    x.fillStyle = th.fg; x.font = font(tx, 500, u * 0.55);
+    lines.forEach((l, i) => x.fillText(l, L + pad, T + pad + u * 1.55 + u * 0.36 + i * u * 0.72));
+    // Counters tick up while the card is on screen.
+    const fy = T + h - pad - u * 0.15, n = (k) => { const v = Math.floor(k * Math.min(1, t / 2.5)); return v >= 1000 ? (v / 1000).toFixed(1) + ' mil' : String(v); };
+    x.fillStyle = sub; x.font = font(tx, 500, u * 0.4);
+    x.fillText('♡ ' + n(12400) + '    ⟲ ' + n(1830) + '    💬 ' + n(342), L + pad, fy);
+  }],
+  bubble: [(x, tx, u) => cardLayout(x, tx, u, 'bubble'), (x, tx, th, t, u) => {
+    const { w, h, lines } = cardLayout(x, tx, u, 'bubble'), L = -w / 2, T = -h / 2, pad = u * 0.45;
+    x.shadowColor = '#00000044'; x.shadowBlur = u * 0.35;
+    x.beginPath(); x.roundRect(L, T, w, h, u * 0.3);
+    x.moveTo(L + u * 0.4, T + h - 1); x.lineTo(L + u * 0.25, T + h + u * 0.4); x.lineTo(L + u * 0.95, T + h - 1);
+    x.fillStyle = th.bg || '#fff'; x.fill(); x.shadowColor = 'transparent';
+    x.textBaseline = 'middle';
+    avatar(x, tx, L + pad + u * 0.17, T + pad + u * 0.2, u * 0.2);
+    x.fillStyle = '#71767b'; x.font = font(tx, 500, u * 0.36); x.fillText('Respuesta a ' + handle(tx), L + pad + u * 0.5, T + pad + u * 0.2);
+    x.fillStyle = th.fg; x.font = font(tx, 700, u * 0.5);
+    lines.forEach((l, i) => x.fillText(l, L + pad, T + pad + u * 0.85 + i * u * 0.65));
+  }],
   // Live-stream style reactions: the clip's emojis float up from the bottom, wobbling and fading, one every 0.22 s.
-  reactions: [(u) => ({ w: u * 3, h: u * 7 }), (x, tx, th, t, u) => {
+  reactions: [(x, tx, u) => ({ w: u * 3, h: u * 7 }), (x, tx, th, t, u) => {
     const list = [...new Intl.Segmenter().segment(tx.content || '❤️')].map((g) => g.segment).filter((g) => g.trim());
     const life = 2.4, every = 0.22, H = u * 7;
     x.textAlign = 'center'; x.textBaseline = 'middle';
@@ -128,14 +191,14 @@ const SPECIAL = {
     }
   }],
   // Video progress bar: fills across the clip's duration, with a glowing head.
-  progress: [(u) => ({ w: u * 16, h: u * 0.6 }), (x, tx, th, t, u, dur) => {
+  progress: [(x, tx, u) => ({ w: u * 16, h: u * 0.6 }), (x, tx, th, t, u, dur) => {
     const w = u * 16, h = u * 0.3, p = Math.min(1, Math.max(0, t / dur));
     x.beginPath(); x.roundRect(-w / 2, -h / 2, w, h, h / 2); x.fillStyle = '#ffffff40'; x.fill();
     if (p > 0) { x.beginPath(); x.roundRect(-w / 2, -h / 2, Math.max(h, w * p), h, h / 2); x.fillStyle = fillOf(x, th, -w / 2, 0, w / 2, 0); x.fill(); }
     x.shadowColor = '#00000088'; x.shadowBlur = h; x.beginPath(); x.arc(-w / 2 + Math.max(h / 2, w * p - h / 2), 0, h, 0, Math.PI * 2); x.fillStyle = '#ffffff'; x.fill();
   }],
   // Countdown: whole seconds left (dur → 1), each number pops in while a ring empties around it.
-  countdown: [(u) => ({ w: u * 3, h: u * 3 }), (x, tx, th, t, u, dur) => {
+  countdown: [(x, tx, u) => ({ w: u * 3, h: u * 3 }), (x, tx, th, t, u, dur) => {
     const left = Math.max(0, dur - t), n = Math.max(1, Math.ceil(left - 1e-6)), f = left - (n - 1), R = u * 1.4; // f: 1 → 0 within each second
     x.shadowColor = '#00000066'; x.shadowBlur = u * 0.3;
     x.beginPath(); x.arc(0, 0, R, 0, Math.PI * 2); x.fillStyle = fillOf(x, th, -R, -R, R, R); x.fill(); x.shadowBlur = 0;
@@ -148,7 +211,7 @@ const SPECIAL = {
 };
 
 export function badgeSize(x, tx, u) {
-  if (SPECIAL[tx.badge.kind]) return SPECIAL[tx.badge.kind][0](u);
+  if (SPECIAL[tx.badge.kind]) { x.save(); const r = SPECIAL[tx.badge.kind][0](x, tx, u); x.restore(); return { w: r.w, h: r.h }; }
   x.save(); const l = layout(x, tx, u); x.restore(); return { w: l.w, h: l.label ? l.h : l.h * 1.6 }; }
 
 // Draws the sticker centered at (0, 0) of the current transform; u = text size in canvas pixels; t = clip-local seconds;

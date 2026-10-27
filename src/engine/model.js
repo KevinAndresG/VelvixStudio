@@ -286,6 +286,7 @@ export const TRANSITIONS = {
   slideLeft: 'Deslizar ←', slideRight: 'Deslizar →', slideUp: 'Deslizar ↑', slideDown: 'Deslizar ↓',
   push: 'Empujar', wipeLeft: 'Barrido ←', wipeRight: 'Barrido →', wipeDown: 'Barrido ↓', wipeUp: 'Barrido ↑', circle: 'Círculo', diamond: 'Diamante',
   zoomIn: 'Zoom in', zoomOut: 'Zoom out', spin: 'Giro', blur: 'Desenfoque', glitch: 'Glitch', shake: 'Sacudida', split: 'Partir',
+  whip: 'Barrido rápido', zoomSpin: 'Zoom giro', rgbGlitch: 'Glitch RGB', light: 'Luz', heart: 'Corazón', star: 'Estrella',
 };
 
 export const EFFECTS = {

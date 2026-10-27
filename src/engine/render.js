@@ -486,13 +486,30 @@ export function canvasToSrc(clip, t, sw, sh, W, H, X, Y) {
 export const transIn = (c) => (c.transition ? Math.min(c.transition.duration, c.duration) : 0);
 export const transOut = (c) => (c.transitionOut ? Math.min(c.transitionOut.duration, c.duration - transIn(c)) : 0);
 // An exit plays an entry backwards: mirror directional ones so «Deslizar ←» also leaves towards the left.
-export const EXIT_AS = { slideLeft: 'slideRight', slideRight: 'slideLeft', slideUp: 'slideDown', slideDown: 'slideUp', wipeLeft: 'wipeRight', wipeRight: 'wipeLeft', wipeUp: 'wipeDown', wipeDown: 'wipeUp', push: 'pushBack' };
+export const EXIT_AS = { slideLeft: 'slideRight', slideRight: 'slideLeft', slideUp: 'slideDown', slideDown: 'slideUp', wipeLeft: 'wipeRight', wipeRight: 'wipeLeft', wipeUp: 'wipeDown', wipeDown: 'wipeUp', push: 'pushBack', whip: 'whipBack' };
+// Transitions whose look is a camera move: always drawn with motion blur (spread in progress units).
+const BLURRY = { whip: 0.16, whipBack: 0.16, zoomSpin: 0.1 };
+// Moving ones get motion blur when the project asks for it (#6); fades and wipes wouldn't change.
+export const MOVING = new Set(['slideLeft', 'slideRight', 'slideUp', 'slideDown', 'push', 'pushBack', 'zoomIn', 'zoomOut', 'spin', 'shake', 'split']);
+
+// Motion blur by accumulation: the mean of n sub-frames drawn by fn(x, s), s from 0 to 1 (each added at 1/n).
+export function accumulate(ctx, W, H, n, fn) {
+  const [ac, ax] = scratch(`mbAcc${W}x${H}`, W, H), [sc, sx] = scratch(`mbSub${W}x${H}`, W, H);
+  ax.clearRect(0, 0, W, H);
+  ax.globalCompositeOperation = 'lighter'; ax.globalAlpha = 1 / n;
+  for (let i = 0; i < n; i++) { sx.setTransform(1, 0, 0, 1, 0, 0); sx.clearRect(0, 0, W, H); fn(sx, i / (n - 1)); ax.drawImage(sc, 0, 0); }
+  ax.globalCompositeOperation = 'source-over'; ax.globalAlpha = 1;
+  ctx.drawImage(ac, 0, 0);
+}
 
 // A, B: full-frame layer canvases, either may be null (to/from what's underneath). p: 0 = all A, 1 = all B.
 // A is only drawn where B's frame doesn't cover it yet, so a B that doesn't fill the frame never ends on a stale A.
 // Transition progress curve (`ease` absent = linear, as before).
 const tEase = (tr, p) => (tr.ease ? easeFn(tr.ease)(clamp(p, 0, 1)) : p);
-export function drawTransition(ctx, type, p, A, B, W, H) {
+// mb: motion-blur spread in progress units (0 = none).
+export function drawTransition(ctx, type, p, A, B, W, H, mb = 0) {
+  if (mb >= 0) mb = Math.max(mb, BLURRY[type] || 0); // -1: a sub-frame of an accumulation
+  if (mb > 0) return accumulate(ctx, W, H, BLURRY[type] ? 12 : 7, (x, s) => drawTransition(x, type, clamp(p + (s - 0.5) * mb, 0, 1), A, B, W, H, -1));
   const draw = (c, alpha = 1, fn) => { if (!c) return; ctx.save(); ctx.globalAlpha = alpha; fn && fn(); ctx.drawImage(c, 0, 0); ctx.restore(); };
   const q = easeInOut(p);
   // Crossfade on a layer: A·(1−k) + B·k added, exact where both are opaque and a clean fade where only one is.
@@ -522,8 +539,51 @@ export function drawTransition(ctx, type, p, A, B, W, H) {
       draw(B, 1, () => ctx.translate(ox, oy));
       break;
     }
-    case 'push': draw(A, 1, () => ctx.translate(-W * q, 0)); draw(B, 1, () => ctx.translate(W * (1 - q), 0)); break;
-    case 'pushBack': draw(A, 1, () => ctx.translate(W * q, 0)); draw(B, 1, () => ctx.translate(-W * (1 - q), 0)); break;
+    case 'push': case 'whip': draw(A, 1, () => ctx.translate(-W * q, 0)); draw(B, 1, () => ctx.translate(W * (1 - q), 0)); break;
+    case 'pushBack': case 'whipBack': draw(A, 1, () => ctx.translate(W * q, 0)); draw(B, 1, () => ctx.translate(-W * (1 - q), 0)); break;
+    case 'zoomSpin': {
+      // Punches into A while turning, cuts at the middle and lands on B coming out of the same move.
+      const k = p < 0.5 ? easeInOut(p * 2) : 1 - easeInOut((p - 0.5) * 2);
+      draw(p < 0.5 ? A : B, 1, () => { ctx.translate(W / 2, H / 2); ctx.rotate((p < 0.5 ? k : -k) * Math.PI * 0.6); ctx.scale(1 + k * 2, 1 + k * 2); ctx.translate(-W / 2, -H / 2); });
+      break;
+    }
+    case 'rgbGlitch': {
+      // Channels drift apart while horizontal bands jump, A → B at the peak.
+      const c = p < 0.5 ? A : B, k = 1 - Math.abs(p - 0.5) * 2, seed = Math.floor(p * 24);
+      if (!c) break;
+      const [gc, gx] = scratch(`tRgb${W}x${H}`, W, H);
+      gx.clearRect(0, 0, W, H); gx.globalCompositeOperation = 'lighter';
+      ['#ff0000', '#00ff00', '#0000ff'].forEach((col, i) => {
+        const [cc, cx] = scratch(`tRgb${i}${W}x${H}`, W, H);
+        cx.globalCompositeOperation = 'source-over'; cx.clearRect(0, 0, W, H); cx.drawImage(c, 0, 0);
+        cx.globalCompositeOperation = 'multiply'; cx.fillStyle = col; cx.fillRect(0, 0, W, H);
+        cx.globalCompositeOperation = 'destination-in'; cx.drawImage(c, 0, 0);
+        gx.drawImage(cc, (i - 1) * W * 0.035 * k, (i - 1) * H * 0.01 * k);
+      });
+      gx.globalCompositeOperation = 'source-over';
+      const strips = 10, sh = H / strips;
+      for (let i = 0; i < strips; i++) ctx.drawImage(gc, 0, i * sh, W, sh, rand(seed * 17 + i) < 0.35 ? (rand(seed + i * 7) - 0.5) * W * 0.2 * k : 0, i * sh, W, sh);
+      break;
+    }
+    case 'light': {
+      // Warm light burn sweeping across while it crossfades.
+      mix(q);
+      const k = Math.sin(p * Math.PI), cx0 = W * (-0.2 + 1.4 * p), g = ctx.createRadialGradient(cx0, H * 0.4, 0, cx0, H * 0.4, Math.max(W, H) * 0.8);
+      g.addColorStop(0, '#fff6e0'); g.addColorStop(0.35, '#ffb347'); g.addColorStop(1, '#ff5e0000');
+      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.globalAlpha = k; ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); ctx.restore();
+      break;
+    }
+    case 'heart': reveal(() => {
+      const s = q * Math.max(W, H) * 1.1, x0 = W / 2, y0 = H / 2 + s * 0.15;
+      ctx.moveTo(x0, y0 + s * 0.85);
+      ctx.bezierCurveTo(x0 - s * 1.5, y0 - s * 0.05, x0 - s * 0.6, y0 - s * 1.25, x0, y0 - s * 0.42);
+      ctx.bezierCurveTo(x0 + s * 0.6, y0 - s * 1.25, x0 + s * 1.5, y0 - s * 0.05, x0, y0 + s * 0.85);
+    }); break;
+    case 'star': reveal(() => {
+      const R = q * Math.hypot(W, H) * 1.1, a0 = -Math.PI / 2 + q * Math.PI * 0.4;
+      for (let i = 0; i < 10; i++) { const r = i % 2 ? R * 0.45 : R, a = a0 + (i * Math.PI) / 5; ctx[i ? 'lineTo' : 'moveTo'](W / 2 + Math.cos(a) * r, H / 2 + Math.sin(a) * r); }
+      ctx.closePath();
+    }); break;
     case 'wipeLeft': reveal(() => ctx.rect(W * (1 - q), 0, W * q, H)); break;
     case 'wipeRight': reveal(() => ctx.rect(0, 0, W * q, H)); break;
     case 'wipeDown': reveal(() => ctx.rect(0, 0, W, H * q)); break;
@@ -731,6 +791,16 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
   ctx.fillRect(0, 0, W, H);
   const items = activeVisual(project, t);
   const linked = items.map((i) => i.clip).filter((c) => c.type === 'effect' && t >= c.start && t < clipEnd(c) && effectLink(project, c));
+  // Motion blur (#6, project.motionBlur): moving transitions spread over ~1/40 s of their progress; clips whose
+  // transform or entry/exit animation moves fast average 6 positions over the last 1/60 s (same decoded frame).
+  const mbOf = (type, dur) => (project.motionBlur && MOVING.has(type) ? Math.min(0.15, 1 / (40 * dur)) : 0);
+  const fast = (c) => {
+    if (!project.motionBlur || (c.blend && c.blend !== 'source-over')) return false;
+    const a = transformAt(c, t), b = transformAt(c, t - 1 / 30), local = t - c.start, an = c.anim || {};
+    const moving = (x) => x && x.type && x.type !== 'none' && x.type !== 'fade';
+    return Math.hypot(a.x - b.x, a.y - b.y) > 0.01 || Math.abs(a.scale - b.scale) > 0.02 || Math.abs(a.rotation - b.rotation) > 2
+      || (moving(an.in) && local < an.in.dur) || (moving(an.out) && local > c.duration - an.out.dur);
+  };
   const fxFor = (kind, id) => linked.filter((c) => c.link.kind === kind && c.link.id === id);
   // Clips of a track with linked effects are drawn on their own layer, which gets the effects and is then laid over the frame.
   let layerTrack = null, cx = ctx;
@@ -780,10 +850,10 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       if (tin && t < c.start + tin) {
         const A = it.prev;
         const la = A ? layer(A, Math.min(t, clipEnd(A) - 1e-3), 'tA') : null;
-        drawTransition(cx, c.transition.type, tEase(c.transition, (t - c.start) / tin), la, layer(c, t, 'tB'), W, H);
+        drawTransition(cx, c.transition.type, tEase(c.transition, (t - c.start) / tin), la, layer(c, t, 'tB'), W, H, mbOf(c.transition.type, tin));
       } else {
         const type = c.transitionOut.type;
-        drawTransition(cx, EXIT_AS[type] || type, tEase(c.transitionOut, (clipEnd(c) - t) / tout), null, layer(c, t, 'tB'), W, H);
+        drawTransition(cx, EXIT_AS[type] || type, tEase(c.transitionOut, (clipEnd(c) - t) / tout), null, layer(c, t, 'tB'), W, H, mbOf(type, tout));
       }
       continue;
     }
@@ -795,7 +865,8 @@ export function renderFrame(ctx, project, t, getDrawable, W, H) {
       drawVisual(lx, { ...c, blend: 'source-over' }, t, d, W, H, { media });
       for (const e of own) runEffectClip(lx, e, t, W, H, true);
       cx.save(); cx.globalCompositeOperation = c.blend || 'source-over'; cx.drawImage(lc, 0, 0); cx.restore();
-    } else drawVisual(cx, c, t, d, W, H, { media });
+    } else if (fast(c)) accumulate(cx, W, H, 6, (x, s) => drawVisual(x, c, t - (1 - s) / 60, d, W, H, { media }));
+    else drawVisual(cx, c, t, d, W, H, { media });
   }
   flush();
 }

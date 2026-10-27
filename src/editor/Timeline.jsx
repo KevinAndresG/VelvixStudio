@@ -310,9 +310,17 @@ export default function Timeline() {
     const moving = project.clips.filter((c) => ids.includes(c.id));
     const x0 = e.clientX, t0 = xToTime(e.clientX), pts = snapPoints(ids);
     let started = false, last = null;
+    // Press and hold (no drag) a clip with a transition: the transition loops in the viewer until release (#9).
+    const tr = clip.transition || clip.transitionOut, time0 = getState().time;
+    let raf = 0;
+    const hold = tr && setTimeout(() => {
+      const a = Math.max(0, clip.transition ? clip.start - 0.3 : clipEnd(clip) - tr.duration - 0.3), len = tr.duration + 0.6, s0 = performance.now();
+      const tick = () => { setState({ time: a + (((performance.now() - s0) / 1000) % len) }); raf = requestAnimationFrame(tick); };
+      tick();
+    }, 450);
     const move = (ev) => {
       if (!started && Math.abs(ev.clientX - x0) < 4 && Math.abs(ev.clientY - e.clientY) < 4) return;
-      started = true;
+      started = true; clearTimeout(hold);
       let dt = xToTime(ev.clientX) - t0;
       dt = Math.max(dt, -Math.min(...moving.map((c) => c.start)));
       // Snap either edge of the grabbed clip.
@@ -325,7 +333,8 @@ export default function Timeline() {
     };
     const up = () => {
       window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      setDrag(null); setSnapLine(null);
+      setDrag(null); setSnapLine(null); clearTimeout(hold);
+      if (raf) { cancelAnimationFrame(raf); setState({ time: time0 }); }
       if (!started || !last) return;
       const { dt, trackId, insert } = last;
       update((p) => {
