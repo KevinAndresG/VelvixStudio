@@ -1,7 +1,7 @@
 // Transcript-driven editing: words with timeline times live in project.transcript.words.
 // Deleting words, fillers or pauses ripple-cuts that time out of every track.
 import { getState, update, toast } from '../store.js';
-import { clipEnd, projectDuration } from '../engine/model.js';
+import { clipEnd, projectDuration, isKeyword } from '../engine/model.js';
 import { audioSegments } from '../engine/sources.js';
 import { splitClip, packMain, cleanupTracks } from './actions.js';
 
@@ -63,6 +63,52 @@ export function rippleDelete(p, ranges) {
   }
   packMain(p);
   cleanupTracks(p);
+}
+
+// Auto zoom while talking: each phrase alternates between normal and a slight punch-in,
+// keywords punch in to the full amount. Returns level steps [{ t, v }] (v = extra zoom, 0 = none).
+export function zoomSteps(words, { amount = 0.15, phrases = true, keywords = true } = {}) {
+  const steps = [];
+  let lvl = 0, alt = false;
+  words.forEach((w, i) => {
+    const prev = words[i - 1];
+    if (phrases && prev && (w.s - prev.e > 0.45 || /[.!?…,;:]$/.test(prev.text))) alt = !alt;
+    const want = keywords && isKeyword(w.text) ? amount : alt ? amount / 2 : 0;
+    if (want !== lvl) { steps.push({ t: w.s, v: want }); lvl = want; }
+  });
+  if (lvl) { const last = words[words.length - 1]; steps.push({ t: last.e + 0.3, v: 0 }); }
+  return steps;
+}
+
+// Writes the steps as scale keyframes on the main-track video/image clips (replaces their scale keyframes).
+export function autoZoom(opts = {}) {
+  const words = getState().project.transcript?.words;
+  if (!words || !words.length) { toast('Transcribe primero el audio'); return 0; }
+  const steps = zoomSteps(words, opts), ramp = opts.ramp ?? 0.22;
+  let n = 0;
+  update((p) => {
+    const main = p.tracks.find((t) => t.main);
+    for (const c of p.clips) {
+      if (c.trackId !== main?.id || (c.type !== 'video' && c.type !== 'image')) continue;
+      const base = c.transform.scale, end = clipEnd(c), keys = [];
+      let lvl = 0;
+      for (const [i, s] of steps.entries()) {
+        if (s.t >= end) break;
+        if (s.t > c.start) {
+          // Ease into the new level, finishing on the word; never earlier than the previous change.
+          const a = Math.max(s.t - ramp, i ? (steps[i - 1].t + s.t) / 2 : 0, c.start);
+          keys.push({ t: a - c.start, v: base * (1 + lvl), ease: 'inOut' }, { t: s.t - c.start, v: base * (1 + s.v), ease: 'inOut' });
+        }
+        lvl = s.v;
+      }
+      if (!keys.length) continue;
+      if (keys[0].t > 0) keys.unshift({ t: 0, v: keys[0].v, ease: 'inOut' });
+      c.kf.scale = keys.filter((k, i) => !i || k.t - keys[i - 1].t > 1e-3);
+      n++;
+    }
+  });
+  toast(n ? `Zoom automático en ${n} clip${n > 1 ? 's' : ''} (${steps.length} cambios)` : 'No hay clips de video donde se habla');
+  return n;
 }
 
 export function cutRanges(ranges, label = 'Recortado') {

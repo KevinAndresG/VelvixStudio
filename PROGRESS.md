@@ -64,7 +64,8 @@ Regla del usuario: E2E solo para lo grande/complejo (marcado 🧪), no por cada 
 - [x] ✅ Baratas (v1.17.0): #15 favoritos (transiciones/efectos/estilos de texto, localStorage), #16 copiar/pegar atributos de clip, #11 SFX automáticos (whoosh en transiciones, pop en stickers; biblioteca ya tiene sintetizados), #12 reacciones flotantes (efecto/sticker animado en `stickers.js`), #5 barra de progreso y cuenta regresiva (stickers animados).
 - [x] ✅ Medias (v1.18.0): #9 mantener presionado clip = bucle de su transición, #8 transiciones de cámara (whip pan, zoom giro, glitch RGB, luz, corazón/estrella) en `drawTransition`, #6 motion blur (acumulación de subcuadros en transiciones/keyframes rápidos), #13 burbuja de comentario/tarjeta tweet (`badge` en `stickers.js`).
 - [x] ✅ Extra (v1.19.0): catálogo amplio de stickers vectoriales no emoji.
-- [ ] ⏳ PENDIENTE (siguiente sesión) Caras 🧪: #2 zoom automático al hablar (transcripción + keyframes de escala), #4 exportar varios formatos a la vez (reencuadre de `vision.js` por formato), #3 plantillas con huecos + beat-sync (`templates.js` + detección de ritmo), #17 multicámara (sync por audio con correlación cruzada + cortar entre tomas).
+- [x] ✅ #2 zoom automático al hablar (v1.20.0): `zoomSteps`/`autoZoom` en `transcript.js` (frases alternan zoom leve, palabras clave zoom completo → keyframes de escala en clips de la pista principal), botón en panel Transcripción. E2E `e2e/verify12.cjs`.
+- [ ] ⏳ PENDIENTE Caras 🧪: #4 exportar varios formatos a la vez (reencuadre de `vision.js` por formato), #3 plantillas con huecos + beat-sync (`templates.js` + detección de ritmo), #17 multicámara (sync por audio con correlación cruzada + cortar entre tomas).
 
 ## Plan por sesiones ⏳
 Cada sesión agrupa features que comparten código, para hacerlas juntas con un solo prompt y luego limpiar el contexto (`/clear`).
