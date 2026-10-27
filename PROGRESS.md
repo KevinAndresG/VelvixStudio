@@ -68,6 +68,7 @@ Regla del usuario: E2E solo para lo grande/complejo (marcado 🧪), no por cada 
 - [x] ✅ #4 exportar varios formatos a la vez (v1.21.0): en Exportar, "Exportar también en" 16:9/9:16/1:1; cada extra es una copia reencuadrada siguiendo la cara (`reframedCopy` en `vision.js`) guardada como nombre-9x16.mp4; el proyecto no se toca. E2E `e2e/verify13.cjs`.
 - [x] ✅ #3 plantillas con huecos + beat-sync (v1.22.0): `BEAT_TEMPLATES`/`beatSlots`/`slotLook` en `templates.js` (pulso, suave, lento a rápido, por compás), `fillBeatTemplate` en `audioai.js` (detecta el ritmo si falta, llena la pista principal con las fotos/videos del proyecto en orden). Inspector de audio → "Plantilla al ritmo". E2E `e2e/verify14.cjs`.
 - [x] ✅ #17 multicámara (v1.23.0): `src/editor/multicam.js` — sync por correlación cruzada (FFT) de los ataques de volumen, cortes automáticos (la cámara más fuerte respecto a sí misma gana; si no, alterna) cada N s, audio continuo de la cámara 1, cambio manual de cámara por corte (`setAngle`). Inspector › IA › Multicámara con 2+ clips seleccionados. E2E `e2e/verify15.cjs`.
+- [x] ✅ #18 seleccionar proyectos en el inicio (v1.24.0): modo Seleccionar / Seleccionar todo (respeta el buscador) / Eliminar varios con confirmación, botón Carpeta. E2E `e2e/select.cjs`.
 - Cola de ideas oct 2026 terminada (v1.23.0). Pendiente opcional: `npm run dist` + `PKG=1` de verify12–15.
 
 ## Plan por sesiones ⏳

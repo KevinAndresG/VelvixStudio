@@ -45,6 +45,7 @@ export default function Home() {
   const [drag, setDrag] = useState(false);
   const [crashed, setCrashed] = useState(null);
   const [versions, setVersions] = useState(null); // { p, list }
+  const [sel, setSel] = useState(null); // Set of ids while selecting projects, null otherwise
 
   const [mine, setMine] = useState([]); // templates saved by the user
   const refresh = () => api.listProjects().then(setList);
@@ -99,9 +100,17 @@ export default function Home() {
     await api.saveProject({ ...p, name: name.trim() || p.name, updatedAt: Date.now() });
     setRenaming(null); refresh();
   };
-  const del = async (id) => { await api.deleteProject(id); setConfirm(null); refresh(); };
+  // confirm = array of projects to delete
+  const del = async (ps) => {
+    for (const p of ps) await api.deleteProject(p.id);
+    setConfirm(null); setSel(null); refresh();
+    if (ps.length > 1) toast(`${ps.length} proyectos eliminados`);
+  };
+  const toggle = (id) => { const n = new Set(sel); n.has(id) ? n.delete(id) : n.add(id); setSel(n); };
+  const openFolder = async () => { const { data } = await api.paths(); api.openPath(`${data}\projects`); };
 
   const filtered = useMemo(() => (list || []).filter((p) => p.name.toLowerCase().includes(q.toLowerCase())), [list, q]);
+  const allSel = sel && filtered.length > 0 && filtered.every((p) => sel.has(p.id));
 
   return (
     <div className={`home ${drag ? 'dragging' : ''}`}
@@ -163,11 +172,24 @@ export default function Home() {
         </div>
       </section>
       <section className="projects">
-        <h3>Proyectos <em>{list ? list.length : ''}</em></h3>
+        <div className="proj-head">
+          <h3>Proyectos <em>{list ? list.length : ''}</em></h3>
+          {sel ? <>
+            <span className="sel-count">{sel.size} seleccionados</span>
+            <button className="btn sm" onClick={() => setSel(new Set(allSel ? [] : filtered.map((p) => p.id)))}>{allSel ? 'Quitar selección' : 'Seleccionar todo'}</button>
+            <button className="btn sm danger" disabled={!sel.size} onClick={() => setConfirm(list.filter((p) => sel.has(p.id)))}><Icon name="trash" size={13} /> Eliminar</button>
+            <button className="btn sm" onClick={() => setSel(null)}>Cancelar</button>
+          </> : <>
+            {!!list?.length && <button className="btn sm" onClick={() => setSel(new Set())}><Icon name="check" size={13} /> Seleccionar</button>}
+            <button className="btn sm" onClick={openFolder} title="Abrir la carpeta donde se guardan los proyectos"><Icon name="folder" size={13} /> Carpeta</button>
+          </>}
+        </div>
         {list && !list.length && <p className="empty">Aún no tienes proyectos. Crea uno para empezar.</p>}
         <div className="grid">
           {filtered.map((p) => (
-            <div key={p.id} className="proj" onDoubleClick={() => open(p.id)}>
+            <div key={p.id} className={`proj ${sel ? 'selecting' : ''} ${sel?.has(p.id) ? 'selected' : ''}`}
+              onDoubleClick={() => !sel && open(p.id)} onClickCapture={(e) => { if (sel) { e.stopPropagation(); toggle(p.id); } }}>
+              <span className="proj-check" onClick={(e) => { e.stopPropagation(); sel ? toggle(p.id) : setSel(new Set([p.id])); }} title="Seleccionar">{sel?.has(p.id) && <Icon name="check" size={13} />}</span>
               <div className="thumb" onClick={() => open(p.id)} style={{ aspectRatio: '16/10' }}>
                 {p.thumb ? <img src={mediaUrl(p.thumb)} alt="" /> : <Icon name="film" size={34} />}
                 <span className="dur">{fmtTime(p.duration)}</span>
@@ -183,16 +205,16 @@ export default function Home() {
                 <IconBtn icon="copy" title="Duplicar" size={15} onClick={() => duplicate(p.id)} />
                 <IconBtn icon="reverse" title="Versiones anteriores" size={15} onClick={() => showVersions(p)} />
                 <IconBtn icon="download" title="Exportar paquete (.velvix con medios)" size={15} onClick={() => exportPackage(p)} />
-                <IconBtn icon="trash" title="Eliminar" size={15} onClick={() => setConfirm(p)} />
+                <IconBtn icon="trash" title="Eliminar" size={15} onClick={() => setConfirm([p])} />
               </div>
             </div>
           ))}
         </div>
       </section>
       {confirm && (
-        <Modal title="Eliminar proyecto" onClose={() => setConfirm(null)} width={420}>
-          <p className="modal-text">¿Eliminar <b>{confirm.name}</b>? Esta acción no se puede deshacer. Tus archivos originales no se borran.</p>
-          <div className="modal-actions"><button className="btn" onClick={() => setConfirm(null)}>Cancelar</button><button className="btn danger" onClick={() => del(confirm.id)}>Eliminar</button></div>
+        <Modal title={confirm.length > 1 ? 'Eliminar proyectos' : 'Eliminar proyecto'} onClose={() => setConfirm(null)} width={420}>
+          <p className="modal-text">¿Eliminar {confirm.length > 1 ? <b>{confirm.length} proyectos</b> : <b>{confirm[0].name}</b>}? Esta acción no se puede deshacer. Tus archivos originales no se borran.</p>
+          <div className="modal-actions"><button className="btn" onClick={() => setConfirm(null)}>Cancelar</button><button className="btn danger" onClick={() => del(confirm)}>Eliminar</button></div>
         </Modal>
       )}
       {versions && (

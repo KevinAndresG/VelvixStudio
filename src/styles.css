@@ -91,6 +91,12 @@ kbd { font: 11px Consolas, monospace; background: var(--bg4); border: 1px solid 
 .proj .meta small { color: var(--tx3); }
 .proj-actions { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; opacity: 0; transition: opacity .12s; background: rgba(14,15,19,.85); border-radius: 8px; padding: 2px; }
 .proj:hover .proj-actions { opacity: 1; }
+.proj-head { display: flex; align-items: center; gap: 8px; margin: 0 0 14px; } .proj-head h3 { margin: 0; flex: 1; }
+.sel-count { color: var(--tx2); font-size: 12px; }
+.proj-check { position: absolute; top: 8px; left: 8px; z-index: 2; width: 20px; height: 20px; border-radius: 6px; border: 2px solid rgba(255,255,255,.75); background: rgba(14,15,19,.6); display: grid; place-items: center; color: #fff; cursor: pointer; opacity: 0; transition: opacity .12s; }
+.proj:hover .proj-check, .proj.selecting .proj-check { opacity: 1; }
+.proj.selecting { cursor: pointer; } .proj.selecting .proj-actions { display: none; }
+.proj.selected { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); } .proj.selected .proj-check { background: var(--acc); border-color: var(--acc); }
 .home.dragging::after { content: ''; position: fixed; inset: 10px; border: 2px dashed var(--acc); border-radius: 18px; pointer-events: none; }
 .drop-hint { position: fixed; inset: 0; display: grid; place-content: center; text-align: center; color: var(--acc2); pointer-events: none; background: rgba(14,15,19,.6); font-size: 16px; }
 
