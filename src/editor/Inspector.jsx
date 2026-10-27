@@ -11,6 +11,7 @@ import { presetStyle, TransGrid } from './MediaPanel.jsx';
 import { transIn, transOut } from '../engine/render.js';
 import { isolateVoice, detectBeats, cutToBeat, fillBeatTemplate } from './audioai.js';
 import { BEAT_TEMPLATES } from '../engine/templates.js';
+import { multicam, setAngle } from './multicam.js';
 import ColorTab from './ColorTab.jsx';
 import { BADGES, BADGE_THEMES } from '../engine/stickers.js';
 import { removeBackground, reframeClip, stabilizeClip, unstabilize, upscaleClip, resetVideo, splitScenes, trackObject, untrack, STAB_LEVELS } from './vision.js';
@@ -262,6 +263,7 @@ function AiTab({ clip, edit, media, project }) {
           <button className="btn wide ai-scenes-clip" onClick={() => splitScenes(clip.id, thr)}><Icon name="split" size={15} /> Detectar escenas y dividir</button>
         </Section>
       )}
+      {video && <MulticamSection clip={clip} project={project} />}
       <Section title="Mejorar resolución">
         <dl className="info"><dt>Resolución</dt><dd>{alt && alt.up ? `${alt.up.w}×${alt.up.h} (mejorado)` : `${media.width}×${media.height}`}</dd></dl>
         {!(alt && alt.up) && <button className="btn wide ai-up" disabled={hd} onClick={() => upscaleClip(clip.id)}><Icon name="zoomIn" size={15} /> {hd ? 'Ya está en alta resolución' : `Mejorar a ${media.width * 2}×${media.height * 2} con IA`}</button>}
@@ -270,6 +272,21 @@ function AiTab({ clip, edit, media, project }) {
         <p className="hint">Duplica la resolución con Real-ESRGAN (local). En video tarda: procesa cuadro a cuadro.</p>
       </Section>
     </>
+  );
+}
+
+// Multicam: sync the selected takes by audio and cut between them; a cut switches camera by hand.
+function MulticamSection({ clip, project }) {
+  const selection = useStore((s) => s.selection);
+  const [every, setEvery] = useState('4');
+  const n = project.clips.filter((c) => selection.includes(c.id) && c.type === 'video').length, g = clip.multicam;
+  return (
+    <Section title="Multicámara" defaultOpen={!!g || n > 1}>
+      {g && <div className="seg mc-angles">{g.angles.map((a, i) => <button key={i} className={g.angle === i ? 'active' : ''} onClick={() => setAngle(clip.id, i)}>Cámara {i + 1}</button>)}</div>}
+      <Select label="Cambiar de cámara cada" value={every} options={{ 2: '2 s', 4: '4 s', 6: '6 s', 10: '10 s' }} onChange={setEvery} />
+      <button className="btn wide mc-sync" disabled={n < 2} onClick={() => multicam(selection, { every: +every })}><Icon name="wand" size={15} /> Sincronizar y cortar {n > 1 ? `${n} tomas` : ''}</button>
+      <p className="hint">{n > 1 ? 'Sincroniza las tomas por su audio y corta entre cámaras (la más fuerte gana; si no, alterna). Queda el audio de la primera.' : 'Selecciona con Ctrl+clic una toma de cada cámara del mismo momento.'}{g ? ' Elige arriba la cámara de este corte.' : ''}</p>
+    </Section>
   );
 }
 

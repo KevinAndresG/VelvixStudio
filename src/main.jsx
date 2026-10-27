@@ -13,10 +13,11 @@ import * as gl from './engine/gl.js';
 import * as vision from './editor/vision.js';
 import * as animated from './engine/animated.js';
 import * as library from './editor/library.js';
+import * as multicam from './editor/multicam.js';
 import './styles.css';
 
 // Automation hook used by the end-to-end test script.
-window.__velvix = { store, actions, captions, transcript, model, sources, render, audioai, gl, vision, animated, library };
+window.__velvix = { store, actions, captions, transcript, model, sources, render, audioai, gl, vision, animated, library, multicam };
 
 // Uncaught errors and rejected promises: logged to error.log and shown once as a toast instead of failing silently.
 let lastErr = '', lastErrAt = 0;
